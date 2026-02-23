@@ -1,0 +1,903 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>K.I.T.T. Assistant</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: #0a0a0a;
+  color: #e0e0e0;
+  font-family: 'Courier New', monospace;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* --- Header --- */
+.header {
+  text-align: center;
+  padding: 12px 16px 8px;
+  border-bottom: 1px solid #1a1a1a;
+  flex-shrink: 0;
+}
+
+.header h1 {
+  font-size: 16px;
+  letter-spacing: 6px;
+  color: #ff2200;
+  text-shadow: 0 0 10px rgba(255, 34, 0, 0.5);
+}
+
+/* --- KITT LED Scanner --- */
+.scanner-container {
+  padding: 12px 20px;
+  flex-shrink: 0;
+}
+
+.scanner {
+  height: 12px;
+  background: #111;
+  border-radius: 3px;
+  position: relative;
+  overflow: hidden;
+  box-shadow: inset 0 1px 3px rgba(0,0,0,0.5);
+}
+
+.scanner-light {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: 30%;
+  background: radial-gradient(ellipse at center, #ff2200 0%, #cc0000 40%, transparent 70%);
+  border-radius: 3px;
+  animation: scan 2s ease-in-out infinite;
+  box-shadow: 0 0 15px rgba(255, 34, 0, 0.8), 0 0 30px rgba(255, 34, 0, 0.4);
+}
+
+@keyframes scan {
+  0%, 100% { left: -10%; }
+  50% { left: 80%; }
+}
+
+/* --- Chat Area --- */
+.chat-area {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.message {
+  max-width: 85%;
+  padding: 10px 14px;
+  border-radius: 12px;
+  font-size: 14px;
+  line-height: 1.5;
+  word-wrap: break-word;
+  white-space: pre-wrap;
+}
+
+.message.user {
+  align-self: flex-end;
+  background: #1a2a1a;
+  border: 1px solid #2a4a2a;
+  color: #88cc88;
+}
+
+.message.kitt {
+  align-self: flex-start;
+  background: #1a1111;
+  border: 1px solid #3a1515;
+  color: #ee8888;
+}
+
+.message.system {
+  align-self: center;
+  background: #1a1a1a;
+  border: 1px solid #333;
+  color: #888;
+  font-size: 12px;
+  text-align: center;
+}
+
+.message.kitt .label, .message.user .label {
+  font-size: 11px;
+  opacity: 0.6;
+  margin-bottom: 4px;
+}
+
+/* Typing indicator */
+.typing { display: none; }
+.typing.active { display: block; }
+.typing .dots span {
+  animation: blink 1.4s infinite;
+  font-size: 18px;
+}
+.typing .dots span:nth-child(2) { animation-delay: 0.2s; }
+.typing .dots span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes blink { 0%, 80%, 100% { opacity: 0; } 40% { opacity: 1; } }
+
+/* --- Input Area --- */
+.input-area {
+  padding: 10px 16px;
+  border-top: 1px solid #1a1a1a;
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+  background: #0d0d0d;
+}
+
+.input-area textarea {
+  flex: 1;
+  background: #111;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  color: #e0e0e0;
+  font-family: inherit;
+  font-size: 14px;
+  padding: 10px 12px;
+  resize: none;
+  outline: none;
+  max-height: 100px;
+  min-height: 42px;
+}
+
+.input-area textarea:focus {
+  border-color: #ff2200;
+  box-shadow: 0 0 5px rgba(255, 34, 0, 0.3);
+}
+
+.input-area button {
+  background: #ff2200;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 0 18px;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: bold;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.2s;
+}
+
+.input-area button:hover { background: #cc1a00; }
+.input-area button:disabled { background: #333; cursor: not-allowed; }
+
+/* --- Settings Modal --- */
+.settings-btn {
+  position: absolute;
+  top: 10px;
+  right: 16px;
+  background: none;
+  border: none;
+  color: #555;
+  font-size: 20px;
+  cursor: pointer;
+}
+.settings-btn:hover { color: #ff2200; }
+
+.modal-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.7);
+  z-index: 100;
+  justify-content: center;
+  align-items: center;
+}
+.modal-overlay.active { display: flex; }
+
+.modal {
+  background: #151515;
+  border: 1px solid #333;
+  border-radius: 12px;
+  padding: 24px;
+  width: 90%;
+  max-width: 400px;
+}
+
+.modal h2 {
+  color: #ff2200;
+  font-size: 16px;
+  margin-bottom: 16px;
+}
+
+.modal label {
+  display: block;
+  font-size: 12px;
+  color: #888;
+  margin-bottom: 4px;
+}
+
+.modal input {
+  width: 100%;
+  background: #111;
+  border: 1px solid #2a2a2a;
+  border-radius: 6px;
+  color: #e0e0e0;
+  font-family: inherit;
+  font-size: 14px;
+  padding: 8px 10px;
+  margin-bottom: 12px;
+  outline: none;
+}
+
+.modal input:focus { border-color: #ff2200; }
+
+.modal-buttons {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+
+.modal-buttons button {
+  padding: 8px 16px;
+  border-radius: 6px;
+  border: none;
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.btn-save { background: #ff2200; color: #fff; }
+.btn-cancel { background: #333; color: #ccc; }
+.btn-danger { background: #441111; color: #ff6666; }
+
+/* --- Save & Analyze Button --- */
+.save-btn {
+  position: absolute;
+  top: 10px;
+  right: 48px;
+  background: none;
+  border: none;
+  color: #555;
+  font-size: 18px;
+  cursor: pointer;
+}
+.save-btn:hover { color: #ff2200; }
+
+/* --- Result Modal --- */
+.result-modal {
+  background: #151515;
+  border: 1px solid #333;
+  border-radius: 12px;
+  padding: 24px;
+  width: 90%;
+  max-width: 500px;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.result-modal h2 {
+  color: #ff2200;
+  font-size: 16px;
+  margin-bottom: 16px;
+}
+
+.result-section {
+  margin-bottom: 16px;
+}
+
+.result-section h3 {
+  color: #ff8866;
+  font-size: 13px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid #2a2a2a;
+  padding-bottom: 4px;
+}
+
+.result-section p, .result-section li {
+  font-size: 13px;
+  line-height: 1.6;
+  color: #ccc;
+}
+
+.result-section ul {
+  list-style: disc;
+  padding-left: 20px;
+}
+
+.result-section .empty {
+  color: #666;
+  font-style: italic;
+}
+
+.log-item {
+  padding: 12px;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+.log-item:hover { border-color: #ff2200; }
+.log-item .log-date {
+  font-size: 11px;
+  color: #888;
+  margin-bottom: 4px;
+}
+.log-item .log-summary {
+  font-size: 13px;
+  color: #ccc;
+  line-height: 1.4;
+}
+.log-empty {
+  color: #666;
+  font-style: italic;
+  font-size: 13px;
+  text-align: center;
+  padding: 20px;
+}
+
+/* Loading overlay */
+.loading-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.8);
+  z-index: 200;
+  justify-content: center;
+  align-items: center;
+  flex-direction: column;
+  gap: 16px;
+  color: #ff8866;
+  font-size: 14px;
+}
+.loading-overlay.active { display: flex; }
+.loading-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid #333;
+  border-top: 3px solid #ff2200;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<div class="header" style="position: relative;">
+  <h1>K.I.T.T.</h1>
+  <button class="save-btn" onclick="analyzeAndSave()" title="保存&分析">&#128190;</button>
+  <button class="settings-btn" onclick="openSettings()">&#9881;</button>
+</div>
+
+<div class="scanner-container">
+  <div class="scanner">
+    <div class="scanner-light"></div>
+  </div>
+</div>
+
+<div class="chat-area" id="chatArea">
+  <!-- Messages will be inserted here -->
+</div>
+
+<div class="message kitt typing" id="typingIndicator" style="margin: 0 16px;">
+  <div class="dots"><span>.</span><span>.</span><span>.</span></div>
+</div>
+
+<div class="input-area">
+  <textarea id="userInput" rows="1" placeholder="K.I.T.T.に話しかける..."
+    onkeydown="handleKeyDown(event)" oninput="autoResize(this)"></textarea>
+  <button id="sendBtn" onclick="sendMessage()">送信</button>
+</div>
+
+<!-- Settings Modal -->
+<div class="modal-overlay" id="settingsModal">
+  <div class="modal">
+    <h2>Settings</h2>
+    <label>Gemini API Key</label>
+    <input type="password" id="apiKeyInput" placeholder="AIza...">
+    <label>System Prompt（K.I.T.T.のキャラ設定）</label>
+    <input type="text" id="systemPromptInput" placeholder="デフォルト使用">
+    <div class="modal-buttons">
+      <button class="btn-danger" onclick="clearHistory()">履歴クリア</button>
+      <button class="btn-cancel" onclick="closeSettings()">キャンセル</button>
+      <button class="btn-save" onclick="saveSettings()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- Result Modal -->
+<div class="modal-overlay" id="resultModal">
+  <div class="result-modal">
+    <h2>&#128203; 会話分析結果</h2>
+    <div id="resultSavedMsg" style="background:#1a2a1a; border:1px solid #2a4a2a; color:#88cc88; padding:8px 12px; border-radius:6px; font-size:12px; margin-bottom:12px; display:none;"></div>
+    <div class="result-section">
+      <h3>要約</h3>
+      <p id="resultSummary"></p>
+    </div>
+    <div class="result-section">
+      <h3>&#128161; アイデア</h3>
+      <div id="resultIdeas"></div>
+    </div>
+    <div class="result-section">
+      <h3>&#9989; タスク</h3>
+      <div id="resultTasks"></div>
+    </div>
+    <div class="result-section">
+      <h3>&#128197; スケジュール</h3>
+      <div id="resultSchedule"></div>
+    </div>
+    <div class="modal-buttons" style="margin-top: 12px;">
+      <button class="btn-cancel" onclick="showLogList()" style="margin-right: auto;">過去のログ</button>
+      <button class="btn-cancel" onclick="closeResult()">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<!-- Log List Modal -->
+<div class="modal-overlay" id="logListModal">
+  <div class="result-modal">
+    <h2>&#128218; 保存済みログ</h2>
+    <div id="logListContainer" style="max-height: 60vh; overflow-y: auto;"></div>
+    <div class="modal-buttons" style="margin-top: 12px;">
+      <button class="btn-danger" onclick="clearAllLogs()">全削除</button>
+      <button class="btn-cancel" onclick="closeLogList()">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<!-- Loading Overlay -->
+<div class="loading-overlay" id="loadingOverlay">
+  <div class="loading-spinner"></div>
+  <div>K.I.T.T. が会話を分析中...</div>
+</div>
+
+<script>
+// --- Config ---
+const DEFAULT_SYSTEM_PROMPT = `あなたはK.I.T.T.（Knight Industries Two Thousand）です。
+ナイトライダーに登場する高性能AIアシスタントとして振る舞ってください。
+- 丁寧で知的、時にユーモアを交えた話し方をします
+- ユーザーを「マイケル」と呼びます（ナイトライダーの主人公）
+- 簡潔に、しかし的確に答えます
+- 日本語で応答します`;
+
+const GEMINI_MODEL = 'gemini-2.5-flash';
+
+// --- State ---
+let apiKey = localStorage.getItem('kitt_api_key') || '';
+let systemPrompt = localStorage.getItem('kitt_system_prompt') || DEFAULT_SYSTEM_PROMPT;
+let chatHistory = JSON.parse(localStorage.getItem('kitt_history') || '[]');
+
+// --- Init ---
+window.addEventListener('load', () => {
+  if (!apiKey) {
+    openSettings();
+    addSystemMessage('APIキーを設定してください（右上の歯車アイコン）');
+  } else {
+    if (chatHistory.length === 0) {
+      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。');
+    } else {
+      restoreHistory();
+    }
+  }
+  document.getElementById('userInput').focus();
+});
+
+// --- Chat Functions ---
+function addMessage(role, text) {
+  const chatArea = document.getElementById('chatArea');
+  const div = document.createElement('div');
+  div.className = `message ${role}`;
+  const label = role === 'user' ? 'You' : 'K.I.T.T.';
+  div.innerHTML = `<div class="label">${label}</div>${escapeHtml(text)}`;
+  chatArea.appendChild(div);
+  chatArea.scrollTop = chatArea.scrollHeight;
+}
+
+function addSystemMessage(text) {
+  const chatArea = document.getElementById('chatArea');
+  const div = document.createElement('div');
+  div.className = 'message system';
+  div.textContent = text;
+  chatArea.appendChild(div);
+  chatArea.scrollTop = chatArea.scrollHeight;
+}
+
+function restoreHistory() {
+  chatHistory.forEach(msg => {
+    if (msg.role === 'user') addMessage('user', msg.text);
+    else if (msg.role === 'kitt') addMessage('kitt', msg.text);
+  });
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+async function sendMessage() {
+  const input = document.getElementById('userInput');
+  const text = input.value.trim();
+  if (!text) return;
+
+  if (!apiKey) {
+    openSettings();
+    return;
+  }
+
+  input.value = '';
+  autoResize(input);
+  addMessage('user', text);
+  chatHistory.push({ role: 'user', text, timestamp: new Date().toISOString() });
+
+  const sendBtn = document.getElementById('sendBtn');
+  sendBtn.disabled = true;
+  const typing = document.getElementById('typingIndicator');
+  typing.classList.add('active');
+
+  try {
+    const response = await callGemini(text);
+    typing.classList.remove('active');
+    addMessage('kitt', response);
+    chatHistory.push({ role: 'kitt', text: response, timestamp: new Date().toISOString() });
+    saveHistory();
+  } catch (err) {
+    typing.classList.remove('active');
+    addSystemMessage(`エラー: ${err.message}`);
+  }
+
+  sendBtn.disabled = false;
+  input.focus();
+}
+
+async function callGemini(userText) {
+  // Build conversation contents for Gemini API
+  const contents = [];
+
+  // Add history (Gemini uses 'user' and 'model' roles)
+  for (const msg of chatHistory.slice(0, -1)) { // exclude the current message (already pushed)
+    contents.push({
+      role: msg.role === 'user' ? 'user' : 'model',
+      parts: [{ text: msg.text }]
+    });
+  }
+
+  // Add current user message
+  contents.push({
+    role: 'user',
+    parts: [{ text: userText }]
+  });
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+
+  const body = {
+    contents,
+    systemInstruction: {
+      parts: [{ text: systemPrompt }]
+    },
+    generationConfig: {
+      temperature: 0.8,
+      maxOutputTokens: 1024
+    }
+  };
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-goog-api-key': apiKey
+    },
+    body: JSON.stringify(body)
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error?.message || `API Error ${res.status}`);
+  }
+
+  const data = await res.json();
+  const candidate = data.candidates?.[0];
+  if (!candidate) throw new Error('応答がありませんでした');
+
+  return candidate.content?.parts?.[0]?.text || '(空の応答)';
+}
+
+// --- History ---
+function saveHistory() {
+  localStorage.setItem('kitt_history', JSON.stringify(chatHistory));
+}
+
+function clearHistory() {
+  if (confirm('会話履歴をすべて削除しますか？')) {
+    chatHistory = [];
+    localStorage.removeItem('kitt_history');
+    document.getElementById('chatArea').innerHTML = '';
+    addSystemMessage('履歴をクリアしました。');
+    closeSettings();
+  }
+}
+
+// --- Settings ---
+function openSettings() {
+  document.getElementById('apiKeyInput').value = apiKey;
+  document.getElementById('systemPromptInput').value =
+    systemPrompt === DEFAULT_SYSTEM_PROMPT ? '' : systemPrompt;
+  document.getElementById('settingsModal').classList.add('active');
+}
+
+function closeSettings() {
+  document.getElementById('settingsModal').classList.remove('active');
+}
+
+function saveSettings() {
+  const key = document.getElementById('apiKeyInput').value.trim();
+  const prompt = document.getElementById('systemPromptInput').value.trim();
+
+  if (key) {
+    apiKey = key;
+    localStorage.setItem('kitt_api_key', key);
+  }
+
+  if (prompt) {
+    systemPrompt = prompt;
+    localStorage.setItem('kitt_system_prompt', prompt);
+  } else {
+    systemPrompt = DEFAULT_SYSTEM_PROMPT;
+    localStorage.removeItem('kitt_system_prompt');
+  }
+
+  closeSettings();
+  if (chatHistory.length === 0 && apiKey) {
+    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。');
+  }
+}
+
+// --- Input Helpers ---
+function handleKeyDown(e) {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+    e.preventDefault();
+    sendMessage();
+  }
+}
+
+function autoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 100) + 'px';
+}
+
+// --- Phase 1.5: Analyze & Save ---
+let lastAnalysis = null;
+
+async function analyzeAndSave() {
+  if (chatHistory.length === 0) {
+    addSystemMessage('会話がありません。まずK.I.T.T.と話してください。');
+    return;
+  }
+  if (!apiKey) {
+    openSettings();
+    return;
+  }
+
+  const loading = document.getElementById('loadingOverlay');
+  loading.classList.add('active');
+
+  try {
+    // Build conversation text for extraction
+    const conversationText = chatHistory.map(msg => {
+      const time = msg.timestamp ? formatTime(msg.timestamp) : '';
+      const speaker = msg.role === 'user' ? 'You' : 'K.I.T.T.';
+      return `[${time}] ${speaker}: ${msg.text}`;
+    }).join('\n');
+
+    const extractionPrompt = `以下の会話を分析して、必ずこの形式のJSONで返してください:
+{"summary":"会話の要約を1行で","ideas":["アイデア1","アイデア2"],"tasks":["タスク1"],"schedule":["予定1"]}
+
+ルール:
+- summary: 会話全体の要約（20文字以内、改行禁止）
+- ideas: アイデアや思いつき（各項目15文字以内）
+- tasks: やるべきこと（各項目15文字以内）
+- schedule: 日時のある予定（各項目15文字以内）
+- 該当なしは空配列[]、summaryは"雑談"とする
+- 各値は短く簡潔に。改行やダブルクォートを含めない
+
+会話:
+${conversationText}`;
+
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+    const body = {
+      contents: [{ role: 'user', parts: [{ text: extractionPrompt }] }],
+      generationConfig: {
+        temperature: 0.2,
+        maxOutputTokens: 4096,
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: 'OBJECT',
+          properties: {
+            summary: { type: 'STRING' },
+            ideas: { type: 'ARRAY', items: { type: 'STRING' } },
+            tasks: { type: 'ARRAY', items: { type: 'STRING' } },
+            schedule: { type: 'ARRAY', items: { type: 'STRING' } }
+          },
+          required: ['summary', 'ideas', 'tasks', 'schedule']
+        }
+      }
+    };
+
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': apiKey
+      },
+      body: JSON.stringify(body)
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error?.message || `API Error ${res.status}`);
+    }
+
+    const data = await res.json();
+    const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+    console.log('[KITT分析] Gemini raw response:', rawText);
+    const analysis = safeParseJson(rawText);
+
+    lastAnalysis = {
+      summary: analysis.summary || '',
+      ideas: analysis.ideas || [],
+      tasks: analysis.tasks || [],
+      schedule: analysis.schedule || [],
+      timestamp: new Date().toISOString()
+    };
+
+    // Auto-save to localStorage
+    saveAnalysisLog(lastAnalysis);
+
+    // Display results with saved message
+    showResultModal(lastAnalysis, true);
+  } catch (err) {
+    addSystemMessage(`分析エラー: ${err.message}`);
+  }
+
+  loading.classList.remove('active');
+}
+
+function safeParseJson(rawText) {
+  const attempts = [
+    () => JSON.parse(rawText),
+    () => JSON.parse(rawText.replace(/[\r\n]+/g, ' ')),
+    () => JSON.parse(rawText.replace(/[\x00-\x1f]/g, ' ')),
+  ];
+  // Also try extracting JSON object from text
+  const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+  if (jsonMatch) {
+    attempts.push(
+      () => JSON.parse(jsonMatch[0]),
+      () => JSON.parse(jsonMatch[0].replace(/[\r\n]+/g, ' ')),
+      () => JSON.parse(jsonMatch[0].replace(/[\x00-\x1f]/g, ' ')),
+    );
+  }
+  for (const attempt of attempts) {
+    try { return attempt(); } catch {}
+  }
+  console.error('[KITT分析] JSON parse failed. Raw:', rawText);
+  return { summary: '(分析結果の解析に失敗)', ideas: [], tasks: [], schedule: [] };
+}
+
+function formatTime(isoString) {
+  try {
+    const d = new Date(isoString);
+    return d.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+  } catch { return ''; }
+}
+
+function formatDate(isoString) {
+  try {
+    const d = new Date(isoString);
+    return d.toLocaleDateString('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\//g, '-');
+  } catch { return new Date().toISOString().slice(0, 10); }
+}
+
+function renderList(items, containerId) {
+  const container = document.getElementById(containerId);
+  if (!items || items.length === 0) {
+    container.innerHTML = '<p class="empty">（なし）</p>';
+    return;
+  }
+  const ul = document.createElement('ul');
+  items.forEach(item => {
+    const li = document.createElement('li');
+    li.textContent = item;
+    ul.appendChild(li);
+  });
+  container.innerHTML = '';
+  container.appendChild(ul);
+}
+
+function showResultModal(analysis, showSavedMsg) {
+  const savedMsg = document.getElementById('resultSavedMsg');
+  if (showSavedMsg) {
+    const now = new Date();
+    savedMsg.textContent = `✓ 保存しました（${formatTime(now.toISOString())}）`;
+    savedMsg.style.display = 'block';
+  } else {
+    savedMsg.style.display = 'none';
+  }
+  document.getElementById('resultSummary').textContent = analysis.summary || '（なし）';
+  renderList(analysis.ideas, 'resultIdeas');
+  renderList(analysis.tasks, 'resultTasks');
+  renderList(analysis.schedule, 'resultSchedule');
+  document.getElementById('resultModal').classList.add('active');
+}
+
+function closeResult() {
+  document.getElementById('resultModal').classList.remove('active');
+}
+
+// --- Log Storage ---
+function saveAnalysisLog(analysis) {
+  const logs = JSON.parse(localStorage.getItem('kitt_analysis_logs') || '[]');
+  logs.unshift({
+    timestamp: analysis.timestamp,
+    summary: analysis.summary,
+    ideas: analysis.ideas,
+    tasks: analysis.tasks,
+    schedule: analysis.schedule,
+    conversation: chatHistory.map(msg => ({
+      role: msg.role,
+      text: msg.text,
+      timestamp: msg.timestamp || ''
+    }))
+  });
+  // Keep max 50 logs
+  if (logs.length > 50) logs.length = 50;
+  localStorage.setItem('kitt_analysis_logs', JSON.stringify(logs));
+}
+
+function showLogList() {
+  closeResult();
+  const logs = JSON.parse(localStorage.getItem('kitt_analysis_logs') || '[]');
+  const container = document.getElementById('logListContainer');
+
+  if (logs.length === 0) {
+    container.innerHTML = '<div class="log-empty">保存済みログはありません</div>';
+  } else {
+    container.innerHTML = logs.map((log, i) => {
+      const date = formatDate(log.timestamp);
+      const time = formatTime(log.timestamp);
+      const summary = log.summary || '（要約なし）';
+      return `<div class="log-item" onclick="viewLog(${i})">
+        <div class="log-date">${date} ${time}</div>
+        <div class="log-summary">${escapeHtml(summary)}</div>
+      </div>`;
+    }).join('');
+  }
+
+  document.getElementById('logListModal').classList.add('active');
+}
+
+function viewLog(index) {
+  const logs = JSON.parse(localStorage.getItem('kitt_analysis_logs') || '[]');
+  if (!logs[index]) return;
+  closeLogList();
+  showResultModal(logs[index]);
+}
+
+function closeLogList() {
+  document.getElementById('logListModal').classList.remove('active');
+}
+
+function clearAllLogs() {
+  if (confirm('保存済みの分析ログをすべて削除しますか？')) {
+    localStorage.removeItem('kitt_analysis_logs');
+    closeLogList();
+    addSystemMessage('分析ログを全削除しました。');
+  }
+}
+</script>
+</body>
+</html>
