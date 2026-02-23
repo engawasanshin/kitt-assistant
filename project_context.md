@@ -1,7 +1,7 @@
 # PersonalSecretary プロジェクトコンテキスト
 
 > このファイルは全AI（Claude Code / KITT内Gemini / スタンドアロンGemini）が共有する。
-> 自動生成: 2026-02-23 17:36:59
+> 自動生成: 2026-02-23 17:41:40
 
 ---
 
@@ -57,7 +57,8 @@
 - エクスポート機能: 分析ログをMarkdown形式で出力（Web Share API + Blobフォールバック）
 - **ステータスボード**: 左上の📊ボタンでプロジェクト状況・inbox新着・次タスクを確認可能
 - **プロジェクト文脈注入**: status_summary.json → Geminiのシステムプロンプトに注入。KITTがプロジェクト状況を把握した回答ができる
-- ステータス更新: `python3 00_InfoHub/generate_status_json.py` → git push
+- ステータス更新: `python3 00_InfoHub/generate_status_json.py` → git push（status_summary.json + project_context.md を同時生成）
+- **project_context.md**: .ai_contextの全情報を1ファイルに集約 → Geminiのシステムプロンプトに自動注入
 - GitHub Pages公開: https://engawasanshin.github.io/kitt-assistant/ （iPhone/Macからアクセス可）
 - GitHubリポジトリ: engawasanshin/kitt-assistant
 - 抽出: responseSchema + maxOutputTokens:4096 で安定したJSONパース実現
@@ -134,12 +135,17 @@
      - status_summary.jsonをfetchして表示
      - Geminiのシステムプロンプトにプロジェクト状況を自動注入
   5. GitHub Pagesにpush済み
+  6. project_context.md 生成機能追加
+     - .ai_context/ の全ファイル（status/decisions/known_issues/ai_collaboration/直近2セッション分のlog）を1つのMarkdownに集約
+     - KITTのGeminiシステムプロンプトにフルコンテキスト注入（4000文字制限付き）
+     - `--context` オプションでスタンドアロンGemini用のコピペ出力にも対応
 - **考えたこと・判断**:
   - KITTは静的サイトなのでiCloud Driveを直接読めない → GitHub Pages経由でJSONを共有する方式を採用
-  - Geminiにもstatus_summary.jsonの内容をシステムプロンプトとして注入 → KITTがプロジェクト文脈を持った回答ができる
-  - Claude Code側でJSON生成 → git push のワークフロー（手動だが確実）
-- **次にやること**: iPhoneでステータスボード動作確認、Geminiへのコンテキスト共有テスト
-- **気づき・メモ**: 「情報のレベルを合わせる」＝全AIが同じプロジェクト状況を参照できることが重要
+  - Geminiにもproject_context.mdの内容をシステムプロンプトとして注入 → KITTがプロジェクト全体の文脈を持った回答ができる
+  - Claude Code側でJSON+MD生成 → git push のワークフロー（手動だが確実）
+  - 4000文字制限はGemini flash-liteのトークン効率を考慮した値
+- **次にやること**: iPhoneでステータスボード＆コンテキスト注入の動作確認
+- **気づき・メモ**: 「情報のレベルを合わせる」＝全AIが同じプロジェクト状況を参照できることが重要。project_context.mdで実現
 ### チャット4: AI協業ルール整備 + GitHub Pages + 情報統合Step1-2
 - **やったこと**:
   1. AI協業ルール整備（Claude Code & Gemini）

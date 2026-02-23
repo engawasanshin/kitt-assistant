@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-02-23 17:36:59",
+  "generated_at": "2026-02-23 17:41:40",
   "projects": [
     {
       "name": "00_InfoHub",
@@ -56,6 +56,6 @@
   },
   "latest_session": {
     "title": "チャット5: 情報統合 Step3-4 + ステータスボード（双方向データ共有）",
-    "next_action": "iPhoneでステータスボード動作確認、Geminiへのコンテキスト共有テスト"
+    "next_action": "iPhoneでステータスボード＆コンテキスト注入の動作確認"
   }
 }
