@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-02-23 17:41:40",
+  "generated_at": "2026-02-23 22:15:35",
   "projects": [
     {
       "name": "00_InfoHub",
@@ -21,11 +21,11 @@
     },
     {
       "name": "KITTAssistant",
-      "status": "Phase1.5+ 実装済み",
+      "status": "Phase1.5+ 実装済み（ロードマップ策定済み）",
       "details": [
         "K.I.T.T.風WebApp（HTML+CSS+JS 1枚）: `02_ProductivityTools/KITTAssistant/index.html`",
         "AI: Gemini API（gemini-2.5-flash-lite, 無料枠: 1,000リクエスト/日）",
-        "UI: 赤LEDスキャナー + チャット画面（動作確認済み）"
+        "Phase1=テキストチャット+UI ✅, Phase1.5=秘書機能 ✅, Phase1.5+=ステータスボード ✅"
       ]
     },
     {
@@ -48,14 +48,18 @@
     }
   ],
   "next_tasks": [
-    "情報統合システム構築"
+    "KITT第1弾: iPhone最適化 + API残量カウンター",
+    "KITT第1弾: Phase2 音声認識",
+    "情報統合 Step5",
+    "KITT第2弾: 提案ロジック強化",
+    "KITT第2弾: 感情キャプチャ＆オートダイアリー"
   ],
   "inbox": {
     "count": 0,
     "items": []
   },
   "latest_session": {
-    "title": "チャット5: 情報統合 Step3-4 + ステータスボード（双方向データ共有）",
-    "next_action": "iPhoneでステータスボード＆コンテキスト注入の動作確認"
+    "title": "チャット6: KITT拡張ロードマップ策定（Gemini協議の記録）",
+    "next_action": "KITT第1弾（iPhone最適化 + API残量カウンター + Phase2音声認識）"
   }
 }

@@ -1,13 +1,13 @@
 # PersonalSecretary プロジェクトコンテキスト
 
 > このファイルは全AI（Claude Code / KITT内Gemini / スタンドアロンGemini）が共有する。
-> 自動生成: 2026-02-23 17:41:40
+> 自動生成: 2026-02-23 22:15:35
 
 ---
 
 ## プロジェクト状況
 
-# プロジェクト状況 (最終更新: 2026-02-23 チャット5後)
+# プロジェクト状況 (最終更新: 2026-02-23 チャット6後)
 
 ---
 
@@ -42,26 +42,15 @@
 
 ## 02_ProductivityTools
 
-### KITTAssistant - Phase1.5+ 実装済み
+### KITTAssistant - Phase1.5+ 実装済み（ロードマップ策定済み）
 - K.I.T.T.風WebApp（HTML+CSS+JS 1枚）: `02_ProductivityTools/KITTAssistant/index.html`
 - AI: Gemini API（gemini-2.5-flash-lite, 無料枠: 1,000リクエスト/日）
-  - ※ gemini-2.5-flash は無料枠20に激減、gemini-2.0-flash は廃止予定
-  - レートリミット時の自動リトライ機能あり（最大2回）
-- UI: 赤LEDスキャナー + チャット画面（動作確認済み）
-- APIキー: localStorageに保存（ヘッダー送信、URLに露出しない）
-- IME対応済み（変換確定時に誤送信しない）
-- Phase1=テキストチャット+UI ✅, Phase1.5=秘書機能 ✅, Phase2=音声, Phase3=記憶+連携
-- Phase1.5機能: 「保存&分析」ボタン → Gemini要約・抽出 → 結果モーダル → localStorage自動保存（最大50件）
-- 各メッセージにタイムスタンプ記録（既存履歴との互換性あり）
-- 過去のログ一覧表示・閲覧機能あり
-- エクスポート機能: 分析ログをMarkdown形式で出力（Web Share API + Blobフォールバック）
-- **ステータスボード**: 左上の📊ボタンでプロジェクト状況・inbox新着・次タスクを確認可能
-- **プロジェクト文脈注入**: status_summary.json → Geminiのシステムプロンプトに注入。KITTがプロジェクト状況を把握した回答ができる
-- ステータス更新: `python3 00_InfoHub/generate_status_json.py` → git push（status_summary.json + project_context.md を同時生成）
-- **project_context.md**: .ai_contextの全情報を1ファイルに集約 → Geminiのシステムプロンプトに自動注入
-- GitHub Pages公開: https://engawasanshin.github.io/kitt-assistant/ （iPhone/Macからアクセス可）
-- GitHubリポジトリ: engawasanshin/kitt-assistant
-- 抽出: responseSchema + maxOutputTokens:4096 で安定したJSONパース実現
+- Phase1=テキストチャット+UI ✅, Phase1.5=秘書機能 ✅, Phase1.5+=ステータスボード ✅
+- GitHub Pages公開: https://engawasanshin.github.io/kitt-assistant/
+- **拡張ロードマップ**（Gemini協議 2026-02-23策定、詳細は README.md 参照）:
+  - 第1弾（すぐやる）: iPhone最適化、API残量カウンター、音声認識(Phase2)
+  - 第2弾（次回以降）: 提案ロジック強化、感情キャプチャ＆オートダイアリー
+  - 第3弾（保留）: Google連携(Gmail/Tasks/Maps)、能動的ブリーフィング、BGM演出
 - 詳細: `02_ProductivityTools/KITTAssistant/README.md`
 
 ### ScheduleManager - 未着手
@@ -95,17 +84,14 @@
 
 ## 次にやること候補
 
-1. **情報統合システム構築**（進行中 - Step1-4完了）
-   - ✅ KITTエクスポート機能（Web Share API → iCloud Drive）
-   - ✅ 00_InfoHub/inbox/ 作成
-   - ✅ 新着チェックスクリプト（check_new_items.py）
-   - ✅ CLAUDE.mdにInfoHub運用ルール追加
-   - ⬜ 統合されたinbox → 分類・振り分け自動化
-2. KITTAssistant Phase2（音声入力: Web Speech API）
-3. PhotoMemory: AI分類精度向上（Claude Vision、要APIキー）
-4. PhotoMemory: 検索機能追加
-5. 日次運用の自動化 (cron/launchd)
-6. 各プロジェクトの優先度決め
+1. **KITT第1弾: iPhone最適化 + API残量カウンター**（apple-touch-icon、キャッシュ対策、残量表示）
+2. **KITT第1弾: Phase2 音声認識**（Web Speech API）
+3. **情報統合 Step5**: inbox → 分類・振り分け自動化
+4. **KITT第2弾: 提案ロジック強化**（システムプロンプト改善）
+5. **KITT第2弾: 感情キャプチャ＆オートダイアリー**（秘書機能拡張）
+6. KITT第3弾: Google連携（Gmail/Tasks/Maps）→ 要設計チャット
+7. PhotoMemory: AI分類精度向上（Claude Vision、要APIキー）
+8. 日次運用の自動化 (cron/launchd)
 
 
 ---
@@ -119,60 +105,46 @@
 
 ## 最近の作業ログ（直近2セッション）
 
-### チャット5: 情報統合 Step3-4 + ステータスボード（双方向データ共有）
+### チャット6: KITT拡張ロードマップ策定（Gemini協議の記録）
+- **やったこと**:
+  1. Geminiと協議して出たKITT拡張アイデアを実現性評価
+  2. 優先度3段階に分類（第1弾:すぐやる / 第2弾:次回以降 / 第3弾:保留）
+  3. `KITTAssistant/README.md` にロードマップを詳細記録
+  4. `status.md` の次にやること候補を更新（ロードマップ反映）
+- **考えたこと・判断**:
+  - Google連携（Gmail/Tasks/Maps）は魅力的だが、OAuth認証が必要でHTML1枚構成と相性悪い → Google Apps Script経由の設計が別途必要 → 保留
+  - 能動的ブリーフィング（KITTから話しかける）はPush通知/Service Worker必要 → iPhoneブラウザ制約大 → 保留
+  - 第1弾はiPhone最適化・API残量カウンター・音声認識の3つ。現アーキテクチャのまま実装可能でインパクト大
+  - 感情キャプチャ＆オートダイアリーは秘書機能の自然な拡張として第2弾に
+- **次にやること**: KITT第1弾（iPhone最適化 + API残量カウンター + Phase2音声認識）
+- **気づき・メモ**: Geminiとのブレストで出たアイデアを.mdに記録する運用が定着。KITTが「アイデアの入口」→「Claude Codeで実装」の流れが機能し始めている
+### チャット5: 情報統合 Step3-4 + ステータスボード + 全AI間コンテキスト共有
 - **やったこと**:
   1. `00_InfoHub/check_new_items.py` 新着チェックスクリプト作成
      - inbox/ 内のファイル検出・サマリー表示
-     - `--process <ファイル名>` で処理済みに移動
-     - `--process --all` で全件一括処理
+     - `--process <ファイル名>` で処理済みに移動、`--process --all` で全件一括
   2. CLAUDE.mdにInfoHub運用ルール追加
   3. `00_InfoHub/generate_status_json.py` 作成
-     - status.md + daily_log + inbox情報をJSONに集約
-     - KITTAssistant/status_summary.json に出力
-     - `--stdout` でGemini用コピペ出力も可能
-  4. KITTにステータスボード機能追加
-     - 左上📊ボタン → プロジェクト状況・inbox新着・次タスク表示
-     - status_summary.jsonをfetchして表示
-     - Geminiのシステムプロンプトにプロジェクト状況を自動注入
-  5. GitHub Pagesにpush済み
-  6. project_context.md 生成機能追加
-     - .ai_context/ の全ファイル（status/decisions/known_issues/ai_collaboration/直近2セッション分のlog）を1つのMarkdownに集約
-     - KITTのGeminiシステムプロンプトにフルコンテキスト注入（4000文字制限付き）
-     - `--context` オプションでスタンドアロンGemini用のコピペ出力にも対応
+     - `(default)` → status_summary.json + project_context.md をKITTAssistant/に出力
+     - `--stdout` → JSON標準出力、`--context` → フルコンテキストMD標準出力（Gemini用コピペ）
+  4. KITTにステータスボード機能追加（左上📊ボタン）
+  5. KITTのGeminiシステムプロンプトにproject_context.mdを自動注入（4000文字制限）
+  6. CLAUDE.mdに「Gemini同期手順」セクション追加（作業完了時に同期を促すルール定常化）
+  7. GitHub Pagesにpush済み（3回）
+  8. Geminiにフルコンテキストを初回コピペ実施
 - **考えたこと・判断**:
-  - KITTは静的サイトなのでiCloud Driveを直接読めない → GitHub Pages経由でJSONを共有する方式を採用
-  - Geminiにもproject_context.mdの内容をシステムプロンプトとして注入 → KITTがプロジェクト全体の文脈を持った回答ができる
-  - Claude Code側でJSON+MD生成 → git push のワークフロー（手動だが確実）
-  - 4000文字制限はGemini flash-liteのトークン効率を考慮した値
-- **次にやること**: iPhoneでステータスボード＆コンテキスト注入の動作確認
-- **気づき・メモ**: 「情報のレベルを合わせる」＝全AIが同じプロジェクト状況を参照できることが重要。project_context.mdで実現
-### チャット4: AI協業ルール整備 + GitHub Pages + 情報統合Step1-2
-- **やったこと**:
-  1. AI協業ルール整備（Claude Code & Gemini）
-     - `.ai_context/ai_collaboration.md` 新規作成（協業ルール本体）
-     - `.ai_context/gemini_task_template.md` 新規作成（Geminiへの依頼テンプレート + Claude Codeへの引き継ぎセクション）
-     - CLAUDE.md / MEMORY.md に協業ルール追加
-  2. KITTAssistant GitHub Pages公開
-     - `gh` CLIインストール & GitHub認証
-     - `engawasanshin/kitt-assistant` リポジトリ作成 & Pages有効化
-     - iPhoneからアクセス確認済み: https://engawasanshin.github.io/kitt-assistant/
-  3. KITTAssistant改善
-     - gemini-2.5-flash → gemini-2.5-flash-lite に変更（無料枠: 20→1,000リクエスト/日）
-     - レートリミット(429)自動リトライ機能追加（最大2回、待ち時間自動検出）
-  4. 情報統合システム Step1-2
-     - KITTにエクスポート機能追加（Web Share API + Blobフォールバック）
-     - `00_InfoHub/inbox/` 新規作成（全デバイスからの情報集約先）
-  5. マルチAI協業アイデアを `05_Ideas/inbox/` に登録
-- **考えたこと・判断**:
-  - Gemini無料枠が大幅削減（2025-12月）。flash-liteが1,000/日で最もコスパ良い
-  - AI協業はコピペベースが最も現実的。.mdファイルを橋渡しにする
-  - KITTデータのエクスポートはWeb Share API（iPhone） + Blob（Mac）の二段構え
-  - GitHub Pagesはpublicリポジトリ + HTMLファイル1枚で最も手軽なホスティング
-- **次にやること**: 情報統合システム Step3-5（新着チェックスクリプト、CLAUDE.mdルール追加、ai_collaboration.md更新）
+  - KITTは静的サイト → iCloud直接読み不可 → GitHub Pages経由でJSON/MD共有
+  - 「情報のレベルを合わせる」が最重要。全AI（Claude Code / KITT Gemini / スタンドアロンGemini）が同じ文脈を持つべき
+  - Gemini同期は手動だが、CLAUDE.mdにルール化して定常化した
+  - project_context.md = .ai_contextの全ファイルを1つに集約した「共有脳」
+- **次にやること**:
+  - iPhoneでステータスボード＆コンテキスト注入の動作確認
+  - KITTで「プロジェクト状況は？」と聞いて文脈が反映されるかテスト
+  - 情報統合 Step5（inbox→自動分類・振り分け）
+  - KITT Phase2（音声入力）
 - **気づき・メモ**:
-  - `gh auth refresh -s workflow` でworkflowスコープ追加が必要だった
-  - iPhone Edgeはキャッシュが強い。コード更新後は手動リロード必須
-  - Gemini 2.5-flash-lite は対話に十分な品質
+  - project_context.mdは8600文字超。KITT側では4000文字に切り詰めている（flash-liteのトークン効率）
+  - Google AI Studioでは毎回コピペが必要。KITTをメイン利用すれば自動で済む
 
 ---
 
