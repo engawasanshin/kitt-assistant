@@ -339,6 +339,112 @@ body {
   padding: 20px;
 }
 
+/* --- Status Board --- */
+.status-btn {
+  position: absolute;
+  top: 10px;
+  left: 16px;
+  background: none;
+  border: none;
+  color: #555;
+  font-size: 18px;
+  cursor: pointer;
+}
+.status-btn:hover { color: #ff2200; }
+
+.status-board {
+  background: #151515;
+  border: 1px solid #333;
+  border-radius: 12px;
+  padding: 24px;
+  width: 90%;
+  max-width: 500px;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.status-board h2 {
+  color: #ff2200;
+  font-size: 16px;
+  margin-bottom: 16px;
+}
+
+.status-updated {
+  font-size: 11px;
+  color: #666;
+  margin-bottom: 12px;
+}
+
+.status-card {
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+
+.status-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.status-card-name {
+  font-size: 13px;
+  color: #ee8888;
+  font-weight: bold;
+}
+
+.status-badge {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  color: #fff;
+}
+.status-badge.active { background: #2a5a2a; }
+.status-badge.done { background: #2a4a6a; }
+.status-badge.pending { background: #3a3a3a; }
+
+.status-card-detail {
+  font-size: 11px;
+  color: #999;
+  line-height: 1.4;
+}
+
+.status-section-title {
+  font-size: 12px;
+  color: #ff8866;
+  margin: 14px 0 6px;
+  border-bottom: 1px solid #2a2a2a;
+  padding-bottom: 4px;
+}
+
+.status-inbox-empty {
+  font-size: 12px;
+  color: #666;
+  font-style: italic;
+}
+
+.status-inbox-item {
+  font-size: 12px;
+  color: #ccc;
+  padding: 4px 0;
+  border-bottom: 1px solid #1a1a1a;
+}
+
+.status-next {
+  font-size: 12px;
+  color: #88cc88;
+  line-height: 1.5;
+}
+
+.status-error {
+  font-size: 12px;
+  color: #ff6666;
+  text-align: center;
+  padding: 16px;
+}
+
 /* Loading overlay */
 .loading-overlay {
   display: none;
@@ -368,6 +474,7 @@ body {
 <body>
 
 <div class="header" style="position: relative;">
+  <button class="status-btn" onclick="openStatusBoard()" title="ステータスボード">&#128202;</button>
   <h1>K.I.T.T.</h1>
   <button class="save-btn" onclick="analyzeAndSave()" title="保存&分析">&#128190;</button>
   <button class="settings-btn" onclick="openSettings()">&#9881;</button>
@@ -451,6 +558,19 @@ body {
   </div>
 </div>
 
+<!-- Status Board Modal -->
+<div class="modal-overlay" id="statusModal">
+  <div class="status-board">
+    <h2>&#128202; Status Board</h2>
+    <div class="status-updated" id="statusUpdated"></div>
+    <div id="statusContent"></div>
+    <div class="modal-buttons" style="margin-top: 12px;">
+      <button class="btn-save" onclick="refreshStatusBoard()">&#128260; 更新</button>
+      <button class="btn-cancel" onclick="closeStatusBoard()">閉じる</button>
+    </div>
+  </div>
+</div>
+
 <!-- Loading Overlay -->
 <div class="loading-overlay" id="loadingOverlay">
   <div class="loading-spinner"></div>
@@ -473,8 +593,41 @@ let apiKey = localStorage.getItem('kitt_api_key') || '';
 let systemPrompt = localStorage.getItem('kitt_system_prompt') || DEFAULT_SYSTEM_PROMPT;
 let chatHistory = JSON.parse(localStorage.getItem('kitt_history') || '[]');
 
+// --- Status context for system prompt ---
+let statusContext = '';
+
+async function loadStatusContext() {
+  try {
+    const res = await fetch(STATUS_JSON_URL + '?t=' + Date.now());
+    if (!res.ok) return;
+    const data = await res.json();
+
+    const parts = [];
+    parts.push(`[現在の日時: ${new Date().toLocaleString('ja-JP')}]`);
+    parts.push(`[最終更新: ${data.generated_at}]`);
+
+    if (data.projects) {
+      const active = data.projects.filter(p => p.status !== '未着手');
+      if (active.length > 0) {
+        parts.push('[進行中プロジェクト: ' + active.map(p => `${p.name}(${p.status})`).join(', ') + ']');
+      }
+    }
+
+    if (data.inbox && data.inbox.count > 0) {
+      parts.push(`[InfoHub新着: ${data.inbox.count}件]`);
+    }
+
+    if (data.latest_session && data.latest_session.next_action) {
+      parts.push(`[次のタスク: ${data.latest_session.next_action}]`);
+    }
+
+    statusContext = '\n\n--- プロジェクト状況 ---\n' + parts.join('\n');
+  } catch { /* ignore */ }
+}
+
 // --- Init ---
-window.addEventListener('load', () => {
+window.addEventListener('load', async () => {
+  await loadStatusContext();
   if (!apiKey) {
     openSettings();
     addSystemMessage('APIキーを設定してください（右上の歯車アイコン）');
@@ -601,7 +754,7 @@ async function callGemini(userText) {
   const body = {
     contents,
     systemInstruction: {
-      parts: [{ text: systemPrompt }]
+      parts: [{ text: systemPrompt + statusContext }]
     },
     generationConfig: {
       temperature: 0.8,
@@ -971,6 +1124,87 @@ function clearAllLogs() {
     closeLogList();
     addSystemMessage('分析ログを全削除しました。');
   }
+}
+
+// --- Status Board ---
+const STATUS_JSON_URL = 'status_summary.json';
+
+async function openStatusBoard() {
+  document.getElementById('statusModal').classList.add('active');
+  await refreshStatusBoard();
+}
+
+function closeStatusBoard() {
+  document.getElementById('statusModal').classList.remove('active');
+}
+
+async function refreshStatusBoard() {
+  const content = document.getElementById('statusContent');
+  const updated = document.getElementById('statusUpdated');
+  content.innerHTML = '<div style="text-align:center;color:#888;padding:20px;">読み込み中...</div>';
+
+  try {
+    const res = await fetch(STATUS_JSON_URL + '?t=' + Date.now());
+    if (!res.ok) throw new Error('status_summary.json が見つかりません');
+    const data = await res.json();
+
+    updated.textContent = '最終更新: ' + (data.generated_at || '不明');
+    content.innerHTML = renderStatusBoard(data);
+  } catch (e) {
+    updated.textContent = '';
+    content.innerHTML = '<div class="status-error">ステータス情報を取得できません。<br>Claude Codeで generate_status_json.py を実行してpushしてください。</div>';
+  }
+}
+
+function renderStatusBoard(data) {
+  let html = '';
+
+  // Projects
+  const activeProjects = (data.projects || []).filter(p =>
+    p.status !== '未着手' && p.details && p.details.length > 0
+  );
+
+  if (activeProjects.length > 0) {
+    html += '<div class="status-section-title">プロジェクト</div>';
+    activeProjects.forEach(p => {
+      const badgeClass = p.status.includes('完成') || p.status.includes('done') ? 'done'
+        : p.status.includes('未着手') ? 'pending' : 'active';
+      html += `<div class="status-card">
+        <div class="status-card-header">
+          <span class="status-card-name">${escapeHtml(p.name)}</span>
+          <span class="status-badge ${badgeClass}">${escapeHtml(p.status)}</span>
+        </div>
+        <div class="status-card-detail">${p.details.slice(0, 2).map(d =>
+          escapeHtml(d.replace(/`/g, ''))
+        ).join('<br>')}</div>
+      </div>`;
+    });
+  }
+
+  // Inbox
+  html += '<div class="status-section-title">InfoHub Inbox</div>';
+  if (data.inbox && data.inbox.count > 0) {
+    data.inbox.items.forEach(item => {
+      html += `<div class="status-inbox-item">
+        <strong>${escapeHtml(item.name)}</strong> (${item.updated})
+        ${item.preview ? '<br>' + escapeHtml(item.preview) : ''}
+      </div>`;
+    });
+  } else {
+    html += '<div class="status-inbox-empty">新着なし</div>';
+  }
+
+  // Latest session & next action
+  if (data.latest_session) {
+    html += '<div class="status-section-title">前回のセッション</div>';
+    html += `<div class="status-card-detail">${escapeHtml(data.latest_session.title)}</div>`;
+    if (data.latest_session.next_action) {
+      html += '<div class="status-section-title">次にやること</div>';
+      html += `<div class="status-next">${escapeHtml(data.latest_session.next_action)}</div>`;
+    }
+  }
+
+  return html;
 }
 </script>
 </body>

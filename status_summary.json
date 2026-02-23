@@ -1,0 +1,61 @@
+{
+  "generated_at": "2026-02-23 17:26:47",
+  "projects": [
+    {
+      "name": "00_InfoHub",
+      "status": "運用中",
+      "details": [
+        "全デバイス・全アプリからの情報集約先: `00_InfoHub/inbox/`",
+        "KITT会話分析のエクスポート → iCloud Drive経由で共有",
+        "新着チェック: `python3 00_InfoHub/check_new_items.py`（新チャット開始時に自動実行）"
+      ]
+    },
+    {
+      "name": "PhotoMemorySystem",
+      "status": "完成",
+      "details": [
+        "iPhone撮影 → iCloud同期 → Whisper文字起こし → カテゴリ分類 → HTMLギャラリー",
+        "処理: `PhotoMemorySystem/scripts/process_photo_memos.py`",
+        "ギャラリー: `PhotoMemorySystem/scripts/generate_gallery.py`"
+      ]
+    },
+    {
+      "name": "KITTAssistant",
+      "status": "Phase1.5 実装済み",
+      "details": [
+        "K.I.T.T.風WebApp（HTML+CSS+JS 1枚）: `02_ProductivityTools/KITTAssistant/index.html`",
+        "AI: Gemini API（gemini-2.5-flash-lite, 無料枠: 1,000リクエスト/日）",
+        "UI: 赤LEDスキャナー + チャット画面（動作確認済み）"
+      ]
+    },
+    {
+      "name": "VideoEditor",
+      "status": "未着手",
+      "details": []
+    },
+    {
+      "name": "CircuitDesign",
+      "status": "未着手",
+      "details": []
+    },
+    {
+      "name": "05_Ideas",
+      "status": "inbox/ active/ archive/ の3段階管理構造あり",
+      "details": [
+        "inbox/ active/ archive/ の3段階管理構造あり",
+        "運用ルール未策定"
+      ]
+    }
+  ],
+  "next_tasks": [
+    "情報統合システム構築"
+  ],
+  "inbox": {
+    "count": 0,
+    "items": []
+  },
+  "latest_session": {
+    "title": "チャット5: 情報統合 Step3-4（新着チェック + CLAUDE.mdルール追加）",
+    "next_action": "情報統合 Step5（inbox→自動分類・振り分け）、またはKITT Phase2（音声入力）"
+  }
+}
