@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-02-23 17:26:47",
+  "generated_at": "2026-02-23 17:36:59",
   "projects": [
     {
       "name": "00_InfoHub",
@@ -21,7 +21,7 @@
     },
     {
       "name": "KITTAssistant",
-      "status": "Phase1.5 実装済み",
+      "status": "Phase1.5+ 実装済み",
       "details": [
         "K.I.T.T.風WebApp（HTML+CSS+JS 1枚）: `02_ProductivityTools/KITTAssistant/index.html`",
         "AI: Gemini API（gemini-2.5-flash-lite, 無料枠: 1,000リクエスト/日）",
@@ -55,7 +55,7 @@
     "items": []
   },
   "latest_session": {
-    "title": "チャット5: 情報統合 Step3-4（新着チェック + CLAUDE.mdルール追加）",
-    "next_action": "情報統合 Step5（inbox→自動分類・振り分け）、またはKITT Phase2（音声入力）"
+    "title": "チャット5: 情報統合 Step3-4 + ステータスボード（双方向データ共有）",
+    "next_action": "iPhoneでステータスボード動作確認、Geminiへのコンテキスト共有テスト"
   }
 }

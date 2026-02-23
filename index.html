@@ -595,9 +595,25 @@ let chatHistory = JSON.parse(localStorage.getItem('kitt_history') || '[]');
 
 // --- Status context for system prompt ---
 let statusContext = '';
+const CONTEXT_MD_URL = 'project_context.md';
 
 async function loadStatusContext() {
   try {
+    // project_context.md を優先（フルコンテキスト）
+    const ctxRes = await fetch(CONTEXT_MD_URL + '?t=' + Date.now());
+    if (ctxRes.ok) {
+      const fullContext = await ctxRes.text();
+      // Geminiのトークン制限を考慮して最大4000文字に制限
+      const trimmed = fullContext.length > 4000
+        ? fullContext.slice(0, 4000) + '\n\n（以下省略）'
+        : fullContext;
+      statusContext = '\n\n' + trimmed;
+      return;
+    }
+  } catch { /* fallback to JSON */ }
+
+  try {
+    // フォールバック: status_summary.json
     const res = await fetch(STATUS_JSON_URL + '?t=' + Date.now());
     if (!res.ok) return;
     const data = await res.json();
