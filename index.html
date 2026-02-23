@@ -432,6 +432,7 @@ body {
     </div>
     <div class="modal-buttons" style="margin-top: 12px;">
       <button class="btn-cancel" onclick="showLogList()" style="margin-right: auto;">過去のログ</button>
+      <button class="btn-save" onclick="exportCurrentAnalysis()">&#128228; エクスポート</button>
       <button class="btn-cancel" onclick="closeResult()">閉じる</button>
     </div>
   </div>
@@ -444,6 +445,7 @@ body {
     <div id="logListContainer" style="max-height: 60vh; overflow-y: auto;"></div>
     <div class="modal-buttons" style="margin-top: 12px;">
       <button class="btn-danger" onclick="clearAllLogs()">全削除</button>
+      <button class="btn-save" onclick="exportAllLogs()">&#128228; 全エクスポート</button>
       <button class="btn-cancel" onclick="closeLogList()">閉じる</button>
     </div>
   </div>
@@ -901,6 +903,66 @@ function viewLog(index) {
 
 function closeLogList() {
   document.getElementById('logListModal').classList.remove('active');
+}
+
+// --- Export Functions ---
+function analysisToMarkdown(analysis) {
+  const ts = analysis.timestamp || new Date().toISOString();
+  const d = new Date(ts);
+  const id = d.toISOString().replace(/[-:T]/g, '').slice(0, 15).replace(/(\d{8})(\d{6})/, '$1_$2');
+  const created = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}`;
+  const isMobile = /iPhone|iPad|Android/i.test(navigator.userAgent);
+
+  let md = `---\nid: ${id}\ntype: kitt_analysis\ncreated: ${created}\nsource: kitt\ndevice: ${isMobile ? 'iphone' : 'mac'}\n---\n\n`;
+  md += `# KITT会話分析 - ${created.slice(0, 16)}\n\n`;
+  md += `## 要約\n${analysis.summary || '（なし）'}\n\n`;
+  md += `## アイデア\n${(analysis.ideas || []).length ? analysis.ideas.map(i => `- ${i}`).join('\n') : '（なし）'}\n\n`;
+  md += `## タスク\n${(analysis.tasks || []).length ? analysis.tasks.map(t => `- ${t}`).join('\n') : '（なし）'}\n\n`;
+  md += `## スケジュール\n${(analysis.schedule || []).length ? analysis.schedule.map(s => `- ${s}`).join('\n') : '（なし）'}\n`;
+  return { md, id, created };
+}
+
+async function shareOrDownload(filename, content) {
+  const file = new File([content], filename, { type: 'text/markdown' });
+
+  // Try Web Share API (works on iPhone)
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file], title: filename });
+      addSystemMessage(`共有しました: ${filename}`);
+      return;
+    } catch (e) {
+      if (e.name === 'AbortError') return; // user cancelled
+    }
+  }
+
+  // Fallback: Blob download (Mac)
+  const blob = new Blob([content], { type: 'text/markdown' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+  addSystemMessage(`ダウンロードしました: ${filename}`);
+}
+
+function exportCurrentAnalysis() {
+  if (!lastAnalysis) return;
+  const { md, id } = analysisToMarkdown(lastAnalysis);
+  shareOrDownload(`kitt_${id}.md`, md);
+}
+
+function exportAllLogs() {
+  const logs = JSON.parse(localStorage.getItem('kitt_analysis_logs') || '[]');
+  if (logs.length === 0) {
+    addSystemMessage('エクスポートするログがありません。');
+    return;
+  }
+  const allMd = logs.map(log => analysisToMarkdown(log).md).join('\n---\n\n');
+  const now = new Date();
+  const dateStr = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}`;
+  shareOrDownload(`kitt_all_${dateStr}.md`, allMd);
 }
 
 function clearAllLogs() {
