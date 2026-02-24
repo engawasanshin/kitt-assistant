@@ -3,6 +3,13 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="K.I.T.T.">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<link rel="apple-touch-icon" href="icon-180.png">
 <title>K.I.T.T. Assistant</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -31,6 +38,28 @@ body {
   color: #ff2200;
   text-shadow: 0 0 10px rgba(255, 34, 0, 0.5);
 }
+
+/* --- API Counter Badge --- */
+.api-counter {
+  position: absolute;
+  top: 10px;
+  left: 50px;
+  font-size: 10px;
+  color: #888;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.api-counter:hover { color: #ff2200; }
+.api-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #2a5a2a;
+}
+.api-dot.warn { background: #8a8a2a; }
+.api-dot.danger { background: #8a2a2a; }
 
 /* --- KITT LED Scanner --- */
 .scanner-container {
@@ -475,6 +504,7 @@ body {
 
 <div class="header" style="position: relative;">
   <button class="status-btn" onclick="openStatusBoard()" title="ステータスボード">&#128202;</button>
+  <div class="api-counter" onclick="openStatusBoard()" title="API使用状況"><span class="api-dot" id="apiDot"></span><span id="apiCounterText">--</span></div>
   <h1>K.I.T.T.</h1>
   <button class="save-btn" onclick="analyzeAndSave()" title="保存&分析">&#128190;</button>
   <button class="settings-btn" onclick="openSettings()">&#9881;</button>
@@ -593,6 +623,48 @@ let apiKey = localStorage.getItem('kitt_api_key') || '';
 let systemPrompt = localStorage.getItem('kitt_system_prompt') || DEFAULT_SYSTEM_PROMPT;
 let chatHistory = JSON.parse(localStorage.getItem('kitt_history') || '[]');
 
+// --- API Usage Counter ---
+function getToday() { return new Date().toISOString().slice(0, 10); }
+
+function getApiUsage() {
+  const raw = JSON.parse(localStorage.getItem('kitt_api_usage') || '{}');
+  if (raw.date !== getToday()) {
+    // 日付が変わったらリセット
+    const fresh = { date: getToday(), success: 0, rateLimit: 0, error: 0 };
+    localStorage.setItem('kitt_api_usage', JSON.stringify(fresh));
+    return fresh;
+  }
+  return raw;
+}
+
+function recordApiCall(type) {
+  const usage = getApiUsage();
+  if (type === 'success') usage.success++;
+  else if (type === 'rateLimit') usage.rateLimit++;
+  else if (type === 'error') usage.error++;
+  localStorage.setItem('kitt_api_usage', JSON.stringify(usage));
+  updateApiCounterUI();
+}
+
+function updateApiCounterUI() {
+  const usage = getApiUsage();
+  const total = usage.success + usage.rateLimit + usage.error;
+  const remaining = Math.max(0, 1000 - total);
+  const dot = document.getElementById('apiDot');
+  const text = document.getElementById('apiCounterText');
+  if (!dot || !text) return;
+
+  text.textContent = `${total}/1000`;
+
+  if (remaining <= 50) {
+    dot.className = 'api-dot danger';
+  } else if (remaining <= 200) {
+    dot.className = 'api-dot warn';
+  } else {
+    dot.className = 'api-dot';
+  }
+}
+
 // --- Status context for system prompt ---
 let statusContext = '';
 const CONTEXT_MD_URL = 'project_context.md';
@@ -643,6 +715,7 @@ async function loadStatusContext() {
 
 // --- Init ---
 window.addEventListener('load', async () => {
+  updateApiCounterUI();
   await loadStatusContext();
   if (!apiKey) {
     openSettings();
@@ -729,13 +802,17 @@ async function sendMessage() {
 async function fetchWithRetry(url, options, maxRetries = 2) {
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const res = await fetch(url, options);
-    if (res.ok) return res;
+    if (res.ok) {
+      recordApiCall('success');
+      return res;
+    }
 
     const err = await res.json().catch(() => ({}));
     const errMsg = err.error?.message || '';
 
     // Rate limit (429) - extract wait time and retry
     if (res.status === 429 && attempt < maxRetries) {
+      recordApiCall('rateLimit');
       const waitMatch = errMsg.match(/retry in (\d+(\.\d+)?)/i);
       const waitSec = waitMatch ? Math.ceil(parseFloat(waitMatch[1])) + 2 : 15;
       addSystemMessage(`レート制限中... ${waitSec}秒後にリトライします (${attempt + 1}/${maxRetries})`);
@@ -743,6 +820,7 @@ async function fetchWithRetry(url, options, maxRetries = 2) {
       continue;
     }
 
+    recordApiCall(res.status === 429 ? 'rateLimit' : 'error');
     throw new Error(errMsg || `API Error ${res.status}`);
   }
 }
@@ -1174,6 +1252,27 @@ async function refreshStatusBoard() {
 
 function renderStatusBoard(data) {
   let html = '';
+
+  // K.I.T.T. Health (API usage)
+  const usage = getApiUsage();
+  const total = usage.success + usage.rateLimit + usage.error;
+  const remaining = Math.max(0, 1000 - total);
+  const healthColor = remaining <= 50 ? '#ff4444' : remaining <= 200 ? '#cccc44' : '#44cc44';
+  const barWidth = Math.max(2, (remaining / 1000) * 100);
+
+  html += '<div class="status-section-title">K.I.T.T. System Health</div>';
+  html += `<div class="status-card">
+    <div class="status-card-detail" style="margin-bottom:6px;">
+      <span style="color:${healthColor};">&#9679;</span> API残量: <strong style="color:${healthColor};">${remaining}</strong> / 1,000
+    </div>
+    <div style="background:#1a1a1a;height:8px;border-radius:4px;overflow:hidden;margin-bottom:6px;">
+      <div style="background:${healthColor};height:100%;width:${barWidth}%;border-radius:4px;transition:width 0.3s;"></div>
+    </div>
+    <div class="status-card-detail">
+      &#9989; 成功: ${usage.success} &nbsp; &#9888; 制限: ${usage.rateLimit} &nbsp; &#10060; エラー: ${usage.error}
+    </div>
+    <div class="status-card-detail" style="color:#666;margin-top:4px;">日付: ${usage.date || getToday()}</div>
+  </div>`;
 
   // Projects
   const activeProjects = (data.projects || []).filter(p =>
