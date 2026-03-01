@@ -1,13 +1,13 @@
 # PersonalSecretary プロジェクトコンテキスト
 
 > このファイルは全AI（Claude Code / KITT内Gemini / スタンドアロンGemini）が共有する。
-> 自動生成: 2026-02-23 22:15:35
+> 自動生成: 2026-03-01 13:48:06
 
 ---
 
 ## プロジェクト状況
 
-# プロジェクト状況 (最終更新: 2026-02-23 チャット6後)
+# プロジェクト状況 (最終更新: 2026-03-01 チャット8後)
 
 ---
 
@@ -42,13 +42,20 @@
 
 ## 02_ProductivityTools
 
-### KITTAssistant - Phase1.5+ 実装済み（ロードマップ策定済み）
+### KITTAssistant - Phase1.5+ 実装済み + 記憶システム実装済み
 - K.I.T.T.風WebApp（HTML+CSS+JS 1枚）: `02_ProductivityTools/KITTAssistant/index.html`
 - AI: Gemini API（gemini-2.5-flash-lite, 無料枠: 1,000リクエスト/日）
 - Phase1=テキストチャット+UI ✅, Phase1.5=秘書機能 ✅, Phase1.5+=ステータスボード ✅
+- **API残量カウンター**: ヘッダーにリアルタイム表示（成功/制限/エラー別カウント、日替わりリセット）
+- **iPhone最適化**: apple-touch-icon、Cache-Control no-cache、apple-mobile-web-app対応
+- **記憶システム**: ✅ 実装済み
+  - `kitt_memory.md`: Claude Codeが更新 → GitHub Pages経由でKITTに配信（ユーザープロファイル・Key Facts）
+  - ローカル記憶: 会話分析時にGeminiがユーザーの好み・状況・習慣を抽出 → localStorage蓄積（最大50件）
+  - システムプロンプトに名前（塩川さん）＋記憶コンテキスト自動注入
+  - エクスポートMDに「記憶」セクション追加 → Claude Code側でも知見として活用可能
 - GitHub Pages公開: https://engawasanshin.github.io/kitt-assistant/
 - **拡張ロードマップ**（Gemini協議 2026-02-23策定、詳細は README.md 参照）:
-  - 第1弾（すぐやる）: iPhone最適化、API残量カウンター、音声認識(Phase2)
+  - 第1弾: ✅ iPhone最適化、✅ API残量カウンター、✅ 記憶システム、⬜ 音声認識(Phase2)
   - 第2弾（次回以降）: 提案ロジック強化、感情キャプチャ＆オートダイアリー
   - 第3弾（保留）: Google連携(Gmail/Tasks/Maps)、能動的ブリーフィング、BGM演出
 - 詳細: `02_ProductivityTools/KITTAssistant/README.md`
@@ -84,8 +91,9 @@
 
 ## 次にやること候補
 
-1. **KITT第1弾: iPhone最適化 + API残量カウンター**（apple-touch-icon、キャッシュ対策、残量表示）
-2. **KITT第1弾: Phase2 音声認識**（Web Speech API）
+1. ~~KITT第1弾: iPhone最適化 + API残量カウンター~~ ✅ 実装済み
+2. ~~KITT記憶システム~~ ✅ 実装済み（名前記憶 + 会話からの知識蓄積 + 双方向共有）
+3. **KITT第1弾: Phase2 音声認識**（Web Speech API）
 3. **情報統合 Step5**: inbox → 分類・振り分け自動化
 4. **KITT第2弾: 提案ロジック強化**（システムプロンプト改善）
 5. **KITT第2弾: 感情キャプチャ＆オートダイアリー**（秘書機能拡張）
@@ -105,46 +113,53 @@
 
 ## 最近の作業ログ（直近2セッション）
 
-### チャット6: KITT拡張ロードマップ策定（Gemini協議の記録）
+### チャット8: KITT記憶システム実装
 - **やったこと**:
-  1. Geminiと協議して出たKITT拡張アイデアを実現性評価
-  2. 優先度3段階に分類（第1弾:すぐやる / 第2弾:次回以降 / 第3弾:保留）
-  3. `KITTAssistant/README.md` にロードマップを詳細記録
-  4. `status.md` の次にやること候補を更新（ロードマップ反映）
+  1. `kitt_memory.md` 作成（ユーザープロファイル + Key Facts + Conversation Insights）
+     - Claude Codeが更新 → GitHub Pages経由でKITTが読み込む
+  2. システムプロンプト更新
+     - 「マイケル」→「塩川さん」に変更
+     - 記憶を参照・パーソナライズする指示を追加
+  3. 記憶読み込みシステム（`loadKittMemory` + `getMemoryContext`）
+     - GitHub Pages上のkitt_memory.mdをfetch → システムプロンプトに注入
+     - ローカル記憶（localStorage）も併せて注入
+  4. 会話分析時の記憶抽出ロジック
+     - Geminiの抽出プロンプトに `memories` フィールド追加（ユーザーの好み・状況・習慣）
+     - `responseSchema` に memories 配列追加
+     - 抽出結果を `addLocalMemory()` で localStorage に蓄積（最大50件）
+     - 結果モーダルに「記憶」セクション表示
+     - エクスポートMDに「記憶（KITTが学んだこと）」セクション追加
 - **考えたこと・判断**:
-  - Google連携（Gmail/Tasks/Maps）は魅力的だが、OAuth認証が必要でHTML1枚構成と相性悪い → Google Apps Script経由の設計が別途必要 → 保留
-  - 能動的ブリーフィング（KITTから話しかける）はPush通知/Service Worker必要 → iPhoneブラウザ制約大 → 保留
-  - 第1弾はiPhone最適化・API残量カウンター・音声認識の3つ。現アーキテクチャのまま実装可能でインパクト大
-  - 感情キャプチャ＆オートダイアリーは秘書機能の自然な拡張として第2弾に
-- **次にやること**: KITT第1弾（iPhone最適化 + API残量カウンター + Phase2音声認識）
-- **気づき・メモ**: Geminiとのブレストで出たアイデアを.mdに記録する運用が定着。KITTが「アイデアの入口」→「Claude Codeで実装」の流れが機能し始めている
-### チャット5: 情報統合 Step3-4 + ステータスボード + 全AI間コンテキスト共有
+  - 双方向記憶共有: Claude Code → kitt_memory.md → KITT / KITT → localStorage → エクスポート → Claude Code
+  - ローカル記憶は50件上限で管理。古いものから削除
+  - kitt_memory.mdは1500文字に切り詰めてトークン節約
+- **次にやること**: Phase2 音声認識（Web Speech API）
+- **気づき・メモ**: 記憶システムにより、KITTが「秘書」としてユーザーを理解する基盤が完成
+
+---
+
+## 2026-02-24
+### チャット7: KITT第1弾 実装（API残量カウンター + iPhone最適化）
 - **やったこと**:
-  1. `00_InfoHub/check_new_items.py` 新着チェックスクリプト作成
-     - inbox/ 内のファイル検出・サマリー表示
-     - `--process <ファイル名>` で処理済みに移動、`--process --all` で全件一括
-  2. CLAUDE.mdにInfoHub運用ルール追加
-  3. `00_InfoHub/generate_status_json.py` 作成
-     - `(default)` → status_summary.json + project_context.md をKITTAssistant/に出力
-     - `--stdout` → JSON標準出力、`--context` → フルコンテキストMD標準出力（Gemini用コピペ）
-  4. KITTにステータスボード機能追加（左上📊ボタン）
-  5. KITTのGeminiシステムプロンプトにproject_context.mdを自動注入（4000文字制限）
-  6. CLAUDE.mdに「Gemini同期手順」セクション追加（作業完了時に同期を促すルール定常化）
-  7. GitHub Pagesにpush済み（3回）
-  8. Geminiにフルコンテキストを初回コピペ実施
+  1. API残量カウンター実装
+     - localStorageで日次リクエスト数をカウント（成功/制限/エラー別）
+     - 日付が変わったら自動リセット
+     - ヘッダー左上にリアルタイム残量表示（ドットインジケーター付き）
+     - ステータスボードに詳細表示（プログレスバー + 内訳）
+  2. iPhone最適化
+     - apple-touch-icon（180px PNGアイコン）
+     - apple-mobile-web-app-capable meta
+     - Cache-Control: no-cache
+  3. GitHub Pagesにpush済み
 - **考えたこと・判断**:
-  - KITTは静的サイト → iCloud直接読み不可 → GitHub Pages経由でJSON/MD共有
-  - 「情報のレベルを合わせる」が最重要。全AI（Claude Code / KITT Gemini / スタンドアロンGemini）が同じ文脈を持つべき
-  - Gemini同期は手動だが、CLAUDE.mdにルール化して定常化した
-  - project_context.md = .ai_contextの全ファイルを1つに集約した「共有脳」
-- **次にやること**:
-  - iPhoneでステータスボード＆コンテキスト注入の動作確認
-  - KITTで「プロジェクト状況は？」と聞いて文脈が反映されるかテスト
-  - 情報統合 Step5（inbox→自動分類・振り分け）
-  - KITT Phase2（音声入力）
-- **気づき・メモ**:
-  - project_context.mdは8600文字超。KITT側では4000文字に切り詰めている（flash-liteのトークン効率）
-  - Google AI Studioでは毎回コピペが必要。KITTをメイン利用すれば自動で済む
+  - 1回送信でレート制限 → カウンターで可視化して状況把握
+  - カウンターはヘッダーに常時表示（クリックでステータスボード）
+- **次にやること**: Phase2 音声認識（Web Speech API）
+- **気づき・メモ**: Gemini API無料枠のレート制限が厳しい。分あたりの制限がある可能性
+
+---
+
+## 2026-02-23
 
 ---
 

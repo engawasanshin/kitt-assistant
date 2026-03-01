@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-02-23 22:15:35",
+  "generated_at": "2026-03-01 13:48:06",
   "projects": [
     {
       "name": "00_InfoHub",
@@ -21,7 +21,7 @@
     },
     {
       "name": "KITTAssistant",
-      "status": "Phase1.5+ 実装済み（ロードマップ策定済み）",
+      "status": "Phase1.5+ 実装済み + 記憶システム実装済み",
       "details": [
         "K.I.T.T.風WebApp（HTML+CSS+JS 1枚）: `02_ProductivityTools/KITTAssistant/index.html`",
         "AI: Gemini API（gemini-2.5-flash-lite, 無料枠: 1,000リクエスト/日）",
@@ -48,7 +48,6 @@
     }
   ],
   "next_tasks": [
-    "KITT第1弾: iPhone最適化 + API残量カウンター",
     "KITT第1弾: Phase2 音声認識",
     "情報統合 Step5",
     "KITT第2弾: 提案ロジック強化",
@@ -59,7 +58,7 @@
     "items": []
   },
   "latest_session": {
-    "title": "チャット6: KITT拡張ロードマップ策定（Gemini協議の記録）",
-    "next_action": "KITT第1弾（iPhone最適化 + API残量カウンター + Phase2音声認識）"
+    "title": "チャット8: KITT記憶システム実装",
+    "next_action": "Phase2 音声認識（Web Speech API）"
   }
 }

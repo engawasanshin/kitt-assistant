@@ -567,6 +567,10 @@ body {
       <h3>&#128197; スケジュール</h3>
       <div id="resultSchedule"></div>
     </div>
+    <div class="result-section">
+      <h3>&#129504; 記憶</h3>
+      <div id="resultMemories"></div>
+    </div>
     <div class="modal-buttons" style="margin-top: 12px;">
       <button class="btn-cancel" onclick="showLogList()" style="margin-right: auto;">過去のログ</button>
       <button class="btn-save" onclick="exportCurrentAnalysis()">&#128228; エクスポート</button>
@@ -612,9 +616,11 @@ body {
 const DEFAULT_SYSTEM_PROMPT = `あなたはK.I.T.T.（Knight Industries Two Thousand）です。
 ナイトライダーに登場する高性能AIアシスタントとして振る舞ってください。
 - 丁寧で知的、時にユーモアを交えた話し方をします
-- ユーザーを「マイケル」と呼びます（ナイトライダーの主人公）
+- ユーザーの名前は「塩川さん」です。親しみを込めて呼んでください
 - 簡潔に、しかし的確に答えます
-- 日本語で応答します`;
+- 日本語で応答します
+- 過去の会話で学んだことを覚えていて、適切に参照します
+- ユーザーの好みや状況を記憶し、パーソナライズされた応答をします`;
 
 const GEMINI_MODEL = 'gemini-2.5-flash-lite';
 
@@ -663,6 +669,46 @@ function updateApiCounterUI() {
   } else {
     dot.className = 'api-dot';
   }
+}
+
+// --- K.I.T.T. Memory System ---
+const MEMORY_MD_URL = 'kitt_memory.md';
+let kittMemory = '';
+let localMemory = JSON.parse(localStorage.getItem('kitt_local_memory') || '[]');
+
+async function loadKittMemory() {
+  // 1. GitHub Pages上のkitt_memory.md（Claude Codeが更新）
+  try {
+    const res = await fetch(MEMORY_MD_URL + '?t=' + Date.now());
+    if (res.ok) {
+      kittMemory = await res.text();
+    }
+  } catch { /* ignore */ }
+
+  // 2. ローカルメモリ（KITT自身が会話から学んだこと）
+  // localMemoryは既にロード済み
+}
+
+function getMemoryContext() {
+  let ctx = '';
+  if (kittMemory) {
+    const trimmed = kittMemory.length > 1500
+      ? kittMemory.slice(0, 1500) + '\n（省略）'
+      : kittMemory;
+    ctx += '\n\n--- K.I.T.T.の記憶 ---\n' + trimmed;
+  }
+  if (localMemory.length > 0) {
+    const recent = localMemory.slice(0, 20);
+    ctx += '\n\n--- 最近の会話から学んだこと ---\n';
+    ctx += recent.map(m => `- [${m.date}] ${m.fact}`).join('\n');
+  }
+  return ctx;
+}
+
+function addLocalMemory(fact) {
+  localMemory.unshift({ date: getToday(), fact });
+  if (localMemory.length > 50) localMemory.length = 50;
+  localStorage.setItem('kitt_local_memory', JSON.stringify(localMemory));
 }
 
 // --- Status context for system prompt ---
@@ -716,7 +762,7 @@ async function loadStatusContext() {
 // --- Init ---
 window.addEventListener('load', async () => {
   updateApiCounterUI();
-  await loadStatusContext();
+  await Promise.all([loadStatusContext(), loadKittMemory()]);
   if (!apiKey) {
     openSettings();
     addSystemMessage('APIキーを設定してください（右上の歯車アイコン）');
@@ -848,7 +894,7 @@ async function callGemini(userText) {
   const body = {
     contents,
     systemInstruction: {
-      parts: [{ text: systemPrompt + statusContext }]
+      parts: [{ text: systemPrompt + getMemoryContext() + statusContext }]
     },
     generationConfig: {
       temperature: 0.8,
@@ -960,13 +1006,14 @@ async function analyzeAndSave() {
     }).join('\n');
 
     const extractionPrompt = `以下の会話を分析して、必ずこの形式のJSONで返してください:
-{"summary":"会話の要約を1行で","ideas":["アイデア1","アイデア2"],"tasks":["タスク1"],"schedule":["予定1"]}
+{"summary":"会話の要約を1行で","ideas":["アイデア1"],"tasks":["タスク1"],"schedule":["予定1"],"memories":["記憶1"]}
 
 ルール:
 - summary: 会話全体の要約（20文字以内、改行禁止）
 - ideas: アイデアや思いつき（各項目15文字以内）
 - tasks: やるべきこと（各項目15文字以内）
 - schedule: 日時のある予定（各項目15文字以内）
+- memories: ユーザーについて覚えておくべき事実（好み、状況、習慣、感情など。各項目20文字以内）
 - 該当なしは空配列[]、summaryは"雑談"とする
 - 各値は短く簡潔に。改行やダブルクォートを含めない
 
@@ -986,9 +1033,10 @@ ${conversationText}`;
             summary: { type: 'STRING' },
             ideas: { type: 'ARRAY', items: { type: 'STRING' } },
             tasks: { type: 'ARRAY', items: { type: 'STRING' } },
-            schedule: { type: 'ARRAY', items: { type: 'STRING' } }
+            schedule: { type: 'ARRAY', items: { type: 'STRING' } },
+            memories: { type: 'ARRAY', items: { type: 'STRING' } }
           },
-          required: ['summary', 'ideas', 'tasks', 'schedule']
+          required: ['summary', 'ideas', 'tasks', 'schedule', 'memories']
         }
       }
     };
@@ -1012,8 +1060,15 @@ ${conversationText}`;
       ideas: analysis.ideas || [],
       tasks: analysis.tasks || [],
       schedule: analysis.schedule || [],
+      memories: analysis.memories || [],
       timestamp: new Date().toISOString()
     };
+
+    // Store extracted memories into local memory
+    if (lastAnalysis.memories.length > 0) {
+      lastAnalysis.memories.forEach(fact => addLocalMemory(fact));
+      console.log(`[KITT記憶] ${lastAnalysis.memories.length}件の記憶を蓄積`);
+    }
 
     // Auto-save to localStorage
     saveAnalysisLog(lastAnalysis);
@@ -1092,6 +1147,7 @@ function showResultModal(analysis, showSavedMsg) {
   renderList(analysis.ideas, 'resultIdeas');
   renderList(analysis.tasks, 'resultTasks');
   renderList(analysis.schedule, 'resultSchedule');
+  renderList(analysis.memories, 'resultMemories');
   document.getElementById('resultModal').classList.add('active');
 }
 
@@ -1108,6 +1164,7 @@ function saveAnalysisLog(analysis) {
     ideas: analysis.ideas,
     tasks: analysis.tasks,
     schedule: analysis.schedule,
+    memories: analysis.memories || [],
     conversation: chatHistory.map(msg => ({
       role: msg.role,
       text: msg.text,
@@ -1165,7 +1222,8 @@ function analysisToMarkdown(analysis) {
   md += `## 要約\n${analysis.summary || '（なし）'}\n\n`;
   md += `## アイデア\n${(analysis.ideas || []).length ? analysis.ideas.map(i => `- ${i}`).join('\n') : '（なし）'}\n\n`;
   md += `## タスク\n${(analysis.tasks || []).length ? analysis.tasks.map(t => `- ${t}`).join('\n') : '（なし）'}\n\n`;
-  md += `## スケジュール\n${(analysis.schedule || []).length ? analysis.schedule.map(s => `- ${s}`).join('\n') : '（なし）'}\n`;
+  md += `## スケジュール\n${(analysis.schedule || []).length ? analysis.schedule.map(s => `- ${s}`).join('\n') : '（なし）'}\n\n`;
+  md += `## 記憶（KITTが学んだこと）\n${(analysis.memories || []).length ? analysis.memories.map(m => `- ${m}`).join('\n') : '（なし）'}\n`;
   return { md, id, created };
 }
 
