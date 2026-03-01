@@ -649,11 +649,13 @@ function getToday() { return new Date().toISOString().slice(0, 10); }
 function getApiUsage() {
   const raw = JSON.parse(localStorage.getItem('kitt_api_usage') || '{}');
   if (raw.date !== getToday()) {
-    const fresh = { date: getToday(), success: 0, rateLimit: 0, error: 0, rpmLog: [] };
+    const fresh = { date: getToday(), success: 0, rateLimit: 0, error: 0, rpmLog: [], tpmLog: [], totalTokens: 0 };
     localStorage.setItem('kitt_api_usage', JSON.stringify(fresh));
     return fresh;
   }
   if (!raw.rpmLog) raw.rpmLog = [];
+  if (!raw.tpmLog) raw.tpmLog = [];
+  if (!raw.totalTokens) raw.totalTokens = 0;
   return raw;
 }
 
@@ -665,6 +667,14 @@ function getRpm() {
   return (usage.rpmLog || []).filter(t => t > oneMinAgo).length;
 }
 
+// TPM: 直近60秒間のトークン数を算出
+function getTpm() {
+  const usage = getApiUsage();
+  const now = Date.now();
+  const oneMinAgo = now - 60000;
+  return (usage.tpmLog || []).filter(e => e.t > oneMinAgo).reduce((sum, e) => sum + e.n, 0);
+}
+
 // RPM制限まで何秒待てばいいか（0=待機不要）
 function getRpmWaitSec() {
   const usage = getApiUsage();
@@ -672,20 +682,25 @@ function getRpmWaitSec() {
   const oneMinAgo = now - 60000;
   const recentCalls = (usage.rpmLog || []).filter(t => t > oneMinAgo);
   if (recentCalls.length < 15) return 0;
-  // 最も古い呼び出しが1分経過するまでの秒数
   const oldest = Math.min(...recentCalls);
   return Math.ceil((oldest + 60000 - now) / 1000) + 1;
 }
 
-function recordApiCall(type) {
+function recordApiCall(type, tokenCount) {
   const usage = getApiUsage();
   if (type === 'success') usage.success++;
   else if (type === 'rateLimit') usage.rateLimit++;
   else if (type === 'error') usage.error++;
-  // RPMログに記録（直近2分分だけ保持）
   const now = Date.now();
+  // RPMログ（直近2分保持）
   usage.rpmLog = (usage.rpmLog || []).filter(t => t > now - 120000);
   usage.rpmLog.push(now);
+  // TPMログ（直近2分保持）+ 日次累計
+  if (tokenCount && tokenCount > 0) {
+    usage.tpmLog = (usage.tpmLog || []).filter(e => e.t > now - 120000);
+    usage.tpmLog.push({ t: now, n: tokenCount });
+    usage.totalTokens = (usage.totalTokens || 0) + tokenCount;
+  }
   localStorage.setItem('kitt_api_usage', JSON.stringify(usage));
   updateApiCounterUI();
 }
@@ -700,12 +715,13 @@ function updateApiCounterUI() {
   const text = document.getElementById('apiCounterText');
   if (!dot || !text) return;
 
-  text.textContent = `${total}/1000 | ${rpm}/15rpm`;
+  text.textContent = `${total}/1k | ${rpm}/15rpm`;
 
-  // ドット色: RPM制限が近い場合は優先警告
-  if (rpm >= 15) {
+  // ドット色: RPM/TPM制限が近い場合は優先警告
+  const tpm = getTpm();
+  if (rpm >= 15 || tpm >= 250000) {
     dot.className = 'api-dot danger';
-  } else if (rpm >= 12) {
+  } else if (rpm >= 12 || tpm >= 200000) {
     dot.className = 'api-dot warn';
   } else if (remaining <= 50) {
     dot.className = 'api-dot danger';
@@ -907,7 +923,15 @@ async function fetchWithRetry(url, options, maxRetries = 2) {
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const res = await fetch(url, options);
     if (res.ok) {
-      recordApiCall('success');
+      // トークン数はclone()で取得（呼び出し元がjson()を使うため）
+      try {
+        const clone = res.clone();
+        const d = await clone.json();
+        const tokens = d.usageMetadata?.totalTokenCount || 0;
+        recordApiCall('success', tokens);
+        // 元のレスポンスの代わりにパース済みデータを返す
+        res._parsedData = d;
+      } catch { recordApiCall('success', 0); }
       return res;
     }
 
@@ -986,7 +1010,7 @@ async function callGemini(userText) {
     body: JSON.stringify(body)
   });
 
-  const data = await res.json();
+  const data = res._parsedData || await res.json();
   const candidate = data.candidates?.[0];
   if (!candidate) throw new Error('応答がありませんでした');
 
@@ -1125,7 +1149,7 @@ ${conversationText}`;
       body: JSON.stringify(body)
     });
 
-    const data = await res.json();
+    const data = res._parsedData || await res.json();
     const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
     console.log('[KITT分析] Gemini raw response:', rawText);
     const analysis = safeParseJson(rawText);
@@ -1304,10 +1328,12 @@ function analysisToMarkdown(analysis) {
 
 async function shareOrDownload(filename, content) {
   const file = new File([content], filename, { type: 'text/markdown' });
+  const isMobile = /iPhone|iPad|Android/i.test(navigator.userAgent);
 
   // Try Web Share API (works on iPhone)
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
     try {
+      addSystemMessage('📂 保存先: iCloud Drive > PersonalSecretary > 00_InfoHub > inbox に保存してください');
       await navigator.share({ files: [file], title: filename });
       addSystemMessage(`共有しました: ${filename}`);
       return;
@@ -1325,6 +1351,9 @@ async function shareOrDownload(filename, content) {
   a.click();
   URL.revokeObjectURL(url);
   addSystemMessage(`ダウンロードしました: ${filename}`);
+  if (!isMobile) {
+    addSystemMessage('💡 ファイルを ~/PersonalSecretary/00_InfoHub/inbox/ に移動すると、Claude Codeが読み取れます');
+  }
 }
 
 function exportCurrentAnalysis() {
@@ -1396,23 +1425,33 @@ function renderStatusBoard(data) {
   const rpm = getRpm();
   const rpmColor = rpm >= 15 ? '#ff4444' : rpm >= 12 ? '#cccc44' : '#44cc44';
   const rpmWait = getRpmWaitSec();
+  const tpm = getTpm();
+  const tpmK = Math.round(tpm / 1000);
+  const tpmColor = tpm >= 250000 ? '#ff4444' : tpm >= 200000 ? '#cccc44' : '#44cc44';
+  const totalTokensK = Math.round((usage.totalTokens || 0) / 1000);
 
   html += '<div class="status-section-title">K.I.T.T. System Health</div>';
   html += `<div class="status-card">
     <div class="status-card-detail" style="margin-bottom:6px;">
-      <span style="color:${healthColor};">&#9679;</span> API残量: <strong style="color:${healthColor};">${remaining}</strong> / 1,000 (日次)
+      <span style="color:${healthColor};">&#9679;</span> RPD: <strong style="color:${healthColor};">${remaining}</strong> / 1,000 (日次リクエスト)
     </div>
     <div style="background:#1a1a1a;height:8px;border-radius:4px;overflow:hidden;margin-bottom:6px;">
       <div style="background:${healthColor};height:100%;width:${barWidth}%;border-radius:4px;transition:width 0.3s;"></div>
     </div>
     <div class="status-card-detail" style="margin-bottom:4px;">
-      <span style="color:${rpmColor};">&#9679;</span> RPM: <strong style="color:${rpmColor};">${rpm}</strong> / 15 (分あたり)
+      <span style="color:${rpmColor};">&#9679;</span> RPM: <strong style="color:${rpmColor};">${rpm}</strong> / 15 (分あたりリクエスト)
       ${rpmWait > 0 ? `<span style="color:#cc8844;"> ⏳ 待機必要: ${rpmWait}秒</span>` : ''}
+    </div>
+    <div class="status-card-detail" style="margin-bottom:4px;">
+      <span style="color:${tpmColor};">&#9679;</span> TPM: <strong style="color:${tpmColor};">${tpmK}k</strong> / 250k (分あたりトークン)
+    </div>
+    <div class="status-card-detail" style="margin-bottom:4px;">
+      &#128200; 日次トークン累計: <strong>${totalTokensK}k</strong> tokens
     </div>
     <div class="status-card-detail">
       &#9989; 成功: ${usage.success} &nbsp; &#9888; 制限: ${usage.rateLimit} &nbsp; &#10060; エラー: ${usage.error}
     </div>
-    <div class="status-card-detail" style="color:#666;margin-top:4px;">日付: ${usage.date || getToday()}</div>
+    <div class="status-card-detail" style="color:#666;margin-top:4px;">日付: ${usage.date || getToday()} | リセット: 太平洋時間 0:00</div>
   </div>`;
 
   // Projects
