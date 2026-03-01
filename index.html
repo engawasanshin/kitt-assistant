@@ -552,6 +552,8 @@ body {
     <input type="password" id="apiKeyInput" placeholder="AIza...">
     <label>System Prompt（K.I.T.T.のキャラ設定）</label>
     <input type="text" id="systemPromptInput" placeholder="デフォルト使用">
+    <label>エクスポート保存先 <span id="exportDirName" style="color:#88cc88;font-size:12px;"></span></label>
+    <button class="btn-save" onclick="pickExportFolder()" style="width:100%;margin-bottom:8px;">&#128193; 保存先フォルダを選択</button>
     <div class="modal-buttons">
       <button class="btn-danger" onclick="clearHistory()">履歴クリア</button>
       <button class="btn-cancel" onclick="closeSettings()">キャンセル</button>
@@ -1037,6 +1039,8 @@ function openSettings() {
   document.getElementById('apiKeyInput').value = apiKey;
   document.getElementById('systemPromptInput').value =
     systemPrompt === DEFAULT_SYSTEM_PROMPT ? '' : systemPrompt;
+  const dirName = document.getElementById('exportDirName');
+  dirName.textContent = savedDirHandle ? `（設定済み: ${savedDirHandle.name}/）` : '（未設定）';
   document.getElementById('settingsModal').classList.add('active');
 }
 
@@ -1326,23 +1330,119 @@ function analysisToMarkdown(analysis) {
   return { md, id, created };
 }
 
+// --- Auto-save directory (Mac: File System Access API) ---
+let savedDirHandle = null;
+
+// IndexedDBにディレクトリハンドルを永続保存
+async function saveDirHandle(handle) {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open('kitt_export', 1);
+    req.onupgradeneeded = () => req.result.createObjectStore('handles');
+    req.onsuccess = () => {
+      const tx = req.result.transaction('handles', 'readwrite');
+      tx.objectStore('handles').put(handle, 'exportDir');
+      tx.oncomplete = resolve;
+    };
+    req.onerror = reject;
+  });
+}
+
+async function loadDirHandle() {
+  return new Promise((resolve) => {
+    const req = indexedDB.open('kitt_export', 1);
+    req.onupgradeneeded = () => req.result.createObjectStore('handles');
+    req.onsuccess = () => {
+      const tx = req.result.transaction('handles', 'readonly');
+      const get = tx.objectStore('handles').get('exportDir');
+      get.onsuccess = () => resolve(get.result || null);
+      get.onerror = () => resolve(null);
+    };
+    req.onerror = () => resolve(null);
+  });
+}
+
+// 初期化時に保存済みハンドルを復元
+(async () => {
+  try {
+    savedDirHandle = await loadDirHandle();
+    if (savedDirHandle) console.log('[KITT] 保存先フォルダ復元済み');
+  } catch {}
+})();
+
+async function pickExportFolder() {
+  try {
+    const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+    savedDirHandle = handle;
+    await saveDirHandle(handle);
+    addSystemMessage(`📂 保存先を設定しました: ${handle.name}/`);
+    return true;
+  } catch (e) {
+    if (e.name !== 'AbortError') addSystemMessage(`フォルダ選択エラー: ${e.message}`);
+    return false;
+  }
+}
+
+async function writeToSavedDir(filename, content) {
+  if (!savedDirHandle) return false;
+  try {
+    // 権限の再確認（ブラウザ再起動後に必要な場合がある）
+    const perm = await savedDirHandle.queryPermission({ mode: 'readwrite' });
+    if (perm !== 'granted') {
+      const req = await savedDirHandle.requestPermission({ mode: 'readwrite' });
+      if (req !== 'granted') return false;
+    }
+    const fileHandle = await savedDirHandle.getFileHandle(filename, { create: true });
+    const writable = await fileHandle.createWritable();
+    await writable.write(content);
+    await writable.close();
+    return true;
+  } catch (e) {
+    console.error('[KITT] 自動保存エラー:', e);
+    return false;
+  }
+}
+
 async function shareOrDownload(filename, content) {
-  const file = new File([content], filename, { type: 'text/markdown' });
   const isMobile = /iPhone|iPad|Android/i.test(navigator.userAgent);
 
-  // Try Web Share API (works on iPhone)
+  // Mac: File System Access API（保存先フォルダが設定済みなら自動保存）
+  if (!isMobile && savedDirHandle) {
+    const ok = await writeToSavedDir(filename, content);
+    if (ok) {
+      addSystemMessage(`✅ 自動保存: ${savedDirHandle.name}/${filename}`);
+      return;
+    }
+    // 権限失効時はフォールバック
+    addSystemMessage('⚠ 保存先への書き込みに失敗。フォルダを再設定してください。');
+    savedDirHandle = null;
+  }
+
+  // Mac: 初回はフォルダ選択を促す（File System Access API対応ブラウザ）
+  if (!isMobile && window.showDirectoryPicker) {
+    const picked = await pickExportFolder();
+    if (picked) {
+      const ok = await writeToSavedDir(filename, content);
+      if (ok) {
+        addSystemMessage(`✅ 保存しました: ${savedDirHandle.name}/${filename}`);
+        return;
+      }
+    }
+  }
+
+  // iPhone: Web Share API
+  const file = new File([content], filename, { type: 'text/markdown' });
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
     try {
-      addSystemMessage('📂 保存先: iCloud Drive > PersonalSecretary > 00_InfoHub > inbox に保存してください');
+      addSystemMessage('📂 保存先: iCloud Drive > PersonalSecretary > 00_InfoHub > inbox');
       await navigator.share({ files: [file], title: filename });
       addSystemMessage(`共有しました: ${filename}`);
       return;
     } catch (e) {
-      if (e.name === 'AbortError') return; // user cancelled
+      if (e.name === 'AbortError') return;
     }
   }
 
-  // Fallback: Blob download (Mac)
+  // 最終フォールバック: ダウンロード
   const blob = new Blob([content], { type: 'text/markdown' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -1350,10 +1450,7 @@ async function shareOrDownload(filename, content) {
   a.download = filename;
   a.click();
   URL.revokeObjectURL(url);
-  addSystemMessage(`ダウンロードしました: ${filename}`);
-  if (!isMobile) {
-    addSystemMessage('💡 ファイルを ~/PersonalSecretary/00_InfoHub/inbox/ に移動すると、Claude Codeが読み取れます');
-  }
+  addSystemMessage(`ダウンロード: ${filename}`);
 }
 
 function exportCurrentAnalysis() {
