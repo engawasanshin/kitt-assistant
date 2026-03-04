@@ -870,6 +870,9 @@ window.addEventListener('load', async () => {
   }
   document.getElementById('userInput').focus();
 
+  // Update export button UI on load
+  updateExportButtonUI();
+
   // Periodic export prompt (check every 10 minutes)
   setInterval(checkExportPrompt, 10 * 60 * 1000);
 });
@@ -933,6 +936,7 @@ async function sendMessage() {
     addMessage('kitt', response);
     chatHistory.push({ role: 'kitt', text: response, timestamp: new Date().toISOString() });
     saveHistory();
+    updateExportButtonUI(); // Update export button badge
   } catch (err) {
     typing.classList.remove('active');
     addSystemMessage(`エラー: ${err.message}`);
@@ -1057,8 +1061,10 @@ function clearHistory() {
   if (confirm('会話履歴をすべて削除しますか？')) {
     chatHistory = [];
     localStorage.removeItem('kitt_history');
+    localStorage.removeItem('kitt_last_export_index'); // Reset export index
     document.getElementById('chatArea').innerHTML = '';
     addSystemMessage('履歴をクリアしました。');
+    updateExportButtonUI(); // Reset export button badge
     closeSettings();
   }
 }
@@ -1359,6 +1365,26 @@ function analysisToMarkdown(analysis) {
   return { md, id, created };
 }
 
+// Update export button UI with new message count
+function updateExportButtonUI() {
+  const lastExportIndex = parseInt(localStorage.getItem('kitt_last_export_index') || '0');
+  const newMessagesCount = chatHistory.length - lastExportIndex;
+
+  // Find the export button (会話全文ログボタン)
+  const buttons = document.querySelectorAll('.save-btn');
+  const exportBtn = Array.from(buttons).find(btn => btn.getAttribute('onclick') === 'exportFullConversation()');
+
+  if (exportBtn) {
+    if (newMessagesCount > 0) {
+      exportBtn.innerHTML = `&#128221;(${newMessagesCount})`;
+      exportBtn.title = `会話全文ログ (新規: ${newMessagesCount}件)`;
+    } else {
+      exportBtn.innerHTML = '&#128221;';
+      exportBtn.title = '会話全文ログ';
+    }
+  }
+}
+
 // Get current location (optional, with timeout)
 async function getCurrentLocation() {
   if (!navigator.geolocation) return null;
@@ -1379,8 +1405,8 @@ async function getCurrentLocation() {
   });
 }
 
-// Full conversation log export
-async function conversationToMarkdown(location = null) {
+// Full conversation log export with incremental support
+async function conversationToMarkdown(location = null, startIndex = 0, contextSize = 3) {
   if (chatHistory.length === 0) return null;
 
   const now = new Date();
@@ -1389,15 +1415,24 @@ async function conversationToMarkdown(location = null) {
   const isMobile = /iPhone|iPad|Android/i.test(navigator.userAgent);
   const device = isMobile ? 'iphone' : 'mac';
 
-  // First and last message timestamps
-  const firstMsg = chatHistory[0];
-  const lastMsg = chatHistory[chatHistory.length - 1];
+  // Calculate actual start index (include context messages)
+  const actualStartIndex = Math.max(0, startIndex - contextSize);
+  const exportMessages = chatHistory.slice(actualStartIndex);
+  const newMessagesCount = chatHistory.length - startIndex;
+  const contextMessagesCount = startIndex - actualStartIndex;
+
+  // First and last message timestamps (of exported portion)
+  const firstMsg = exportMessages[0];
+  const lastMsg = exportMessages[exportMessages.length - 1];
   const startTime = firstMsg.timestamp ? new Date(firstMsg.timestamp).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '不明';
   const endTime = lastMsg.timestamp ? new Date(lastMsg.timestamp).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '不明';
 
   let md = `---\nid: ${id}\ntype: kitt_conversation\ncreated: ${created}\ndevice: ${device}\nsource: kitt\n`;
   if (location) {
     md += `location: ${location.latitude.toFixed(6)},${location.longitude.toFixed(6)}\n`;
+  }
+  if (startIndex > 0) {
+    md += `incremental: true\ncontext_messages: ${contextMessagesCount}\nnew_messages: ${newMessagesCount}\n`;
   }
   md += `---\n\n`;
 
@@ -1409,17 +1444,24 @@ async function conversationToMarkdown(location = null) {
   if (location) {
     md += `- 位置: ${location.latitude.toFixed(6)}, ${location.longitude.toFixed(6)}\n`;
   }
-  md += `- メッセージ数: ${chatHistory.length}\n\n`;
+  md += `- メッセージ数: ${exportMessages.length}`;
+  if (startIndex > 0) {
+    md += ` (文脈: ${contextMessagesCount}件、新規: ${newMessagesCount}件)`;
+  }
+  md += `\n\n`;
 
   md += `## 会話\n\n`;
-  chatHistory.forEach(msg => {
+  exportMessages.forEach((msg, idx) => {
     const time = msg.timestamp ? formatTime(msg.timestamp) : '';
     const speaker = msg.role === 'user' ? 'You' : 'K.I.T.T.';
     const timestamp = time ? `[${time}] ` : '';
-    md += `**${timestamp}${speaker}:**\n${msg.text}\n\n`;
+    // Mark context messages
+    const isContext = startIndex > 0 && (actualStartIndex + idx) < startIndex;
+    const contextMarker = isContext ? '_(文脈)_ ' : '';
+    md += `**${timestamp}${speaker}:** ${contextMarker}\n${msg.text}\n\n`;
   });
 
-  return { md, id, created };
+  return { md, id, created, newMessagesCount, contextMessagesCount };
 }
 
 // --- Auto-save directory (Mac: File System Access API) ---
@@ -1557,21 +1599,41 @@ async function exportFullConversation() {
     return;
   }
 
+  // Check for new messages since last export
+  const lastExportIndex = parseInt(localStorage.getItem('kitt_last_export_index') || '0');
+  const newMessagesCount = chatHistory.length - lastExportIndex;
+
+  if (newMessagesCount === 0) {
+    addSystemMessage('新しいメッセージがありません。全てエクスポート済みです。');
+    return;
+  }
+
   // Get location (optional, non-blocking)
-  addSystemMessage('会話ログをエクスポートしています...');
+  addSystemMessage(`会話ログをエクスポートしています... (新規: ${newMessagesCount}件)`);
   const location = await getCurrentLocation();
 
-  const result = await conversationToMarkdown(location);
+  const result = await conversationToMarkdown(location, lastExportIndex);
   if (!result) {
     addSystemMessage('エクスポートに失敗しました。');
     return;
   }
 
-  const { md, id } = result;
+  const { md, id, contextMessagesCount } = result;
   await shareOrDownload(`kitt_conversation_${id}.md`, md);
 
-  // Record last export time for periodic prompt
+  // Record last export time and index
   localStorage.setItem('kitt_last_export', new Date().toISOString());
+  localStorage.setItem('kitt_last_export_index', chatHistory.length.toString());
+
+  // Update export button UI
+  updateExportButtonUI();
+
+  // Success message
+  if (lastExportIndex > 0) {
+    addSystemMessage(`✅ エクスポート完了: 新規 ${newMessagesCount}件 + 文脈 ${contextMessagesCount}件`);
+  } else {
+    addSystemMessage(`✅ エクスポート完了: ${chatHistory.length}件`);
+  }
 }
 
 function exportAllLogs() {
