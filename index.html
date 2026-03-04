@@ -519,6 +519,7 @@ body {
   </div>
   <h1>K.I.T.T.</h1>
   <div class="header-right">
+    <button class="save-btn" onclick="exportFullConversation()" title="会話全文ログ">&#128221;</button>
     <button class="save-btn" onclick="analyzeAndSave()" title="保存&分析">&#128190;</button>
     <button class="settings-btn" onclick="openSettings()">&#9881;</button>
   </div>
@@ -828,6 +829,31 @@ async function loadStatusContext() {
   } catch { /* ignore */ }
 }
 
+// --- Periodic Export Prompt ---
+function checkExportPrompt() {
+  if (chatHistory.length === 0) return; // No conversation to export
+
+  const lastExport = localStorage.getItem('kitt_last_export');
+  const now = Date.now();
+  const oneHour = 60 * 60 * 1000;
+
+  if (!lastExport) {
+    // First time - set initial timestamp
+    localStorage.setItem('kitt_last_export', new Date().toISOString());
+    return;
+  }
+
+  const lastExportTime = new Date(lastExport).getTime();
+  if (now - lastExportTime >= oneHour) {
+    if (confirm('1時間が経過しました。会話ログをエクスポートしますか？')) {
+      exportFullConversation();
+    } else {
+      // User declined, but reset timer to avoid repeated prompts
+      localStorage.setItem('kitt_last_export', new Date().toISOString());
+    }
+  }
+}
+
 // --- Init ---
 window.addEventListener('load', async () => {
   updateApiCounterUI();
@@ -843,6 +869,9 @@ window.addEventListener('load', async () => {
     }
   }
   document.getElementById('userInput').focus();
+
+  // Periodic export prompt (check every 10 minutes)
+  setInterval(checkExportPrompt, 10 * 60 * 1000);
 });
 
 // --- Chat Functions ---
@@ -1330,6 +1359,69 @@ function analysisToMarkdown(analysis) {
   return { md, id, created };
 }
 
+// Get current location (optional, with timeout)
+async function getCurrentLocation() {
+  if (!navigator.geolocation) return null;
+  return new Promise((resolve) => {
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        resolve({
+          latitude: pos.coords.latitude,
+          longitude: pos.coords.longitude
+        });
+      },
+      (err) => {
+        console.log('[位置情報] 取得失敗:', err.message);
+        resolve(null);
+      },
+      { timeout: 5000, maximumAge: 300000 } // 5秒タイムアウト、5分キャッシュ
+    );
+  });
+}
+
+// Full conversation log export
+async function conversationToMarkdown(location = null) {
+  if (chatHistory.length === 0) return null;
+
+  const now = new Date();
+  const id = now.toISOString().replace(/[-:T]/g, '').slice(0, 15).replace(/(\d{8})(\d{6})/, '$1_$2');
+  const created = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
+  const isMobile = /iPhone|iPad|Android/i.test(navigator.userAgent);
+  const device = isMobile ? 'iphone' : 'mac';
+
+  // First and last message timestamps
+  const firstMsg = chatHistory[0];
+  const lastMsg = chatHistory[chatHistory.length - 1];
+  const startTime = firstMsg.timestamp ? new Date(firstMsg.timestamp).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '不明';
+  const endTime = lastMsg.timestamp ? new Date(lastMsg.timestamp).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '不明';
+
+  let md = `---\nid: ${id}\ntype: kitt_conversation\ncreated: ${created}\ndevice: ${device}\nsource: kitt\n`;
+  if (location) {
+    md += `location: ${location.latitude.toFixed(6)},${location.longitude.toFixed(6)}\n`;
+  }
+  md += `---\n\n`;
+
+  md += `# KITT全文会話ログ - ${created.slice(0, 16)}\n\n`;
+
+  md += `## メタデータ\n`;
+  md += `- 日時: ${created.slice(0, 10)} ${startTime} 〜 ${endTime}\n`;
+  md += `- デバイス: ${device}\n`;
+  if (location) {
+    md += `- 位置: ${location.latitude.toFixed(6)}, ${location.longitude.toFixed(6)}\n`;
+  }
+  md += `- メッセージ数: ${chatHistory.length}\n\n`;
+
+  md += `## 会話\n\n`;
+  chatHistory.forEach(msg => {
+    const time = msg.timestamp ? formatTime(msg.timestamp) : '';
+    const speaker = msg.role === 'user' ? 'You' : 'K.I.T.T.';
+    const timestamp = time ? `[${time}] ` : '';
+    md += `**${timestamp}${speaker}:**\n${msg.text}\n\n`;
+  });
+
+  return { md, id, created };
+}
+
 // --- Auto-save directory (Mac: File System Access API) ---
 let savedDirHandle = null;
 
@@ -1457,6 +1549,29 @@ function exportCurrentAnalysis() {
   if (!lastAnalysis) return;
   const { md, id } = analysisToMarkdown(lastAnalysis);
   shareOrDownload(`kitt_${id}.md`, md);
+}
+
+async function exportFullConversation() {
+  if (chatHistory.length === 0) {
+    addSystemMessage('会話がありません。まずK.I.T.T.と話してください。');
+    return;
+  }
+
+  // Get location (optional, non-blocking)
+  addSystemMessage('会話ログをエクスポートしています...');
+  const location = await getCurrentLocation();
+
+  const result = await conversationToMarkdown(location);
+  if (!result) {
+    addSystemMessage('エクスポートに失敗しました。');
+    return;
+  }
+
+  const { md, id } = result;
+  await shareOrDownload(`kitt_conversation_${id}.md`, md);
+
+  // Record last export time for periodic prompt
+  localStorage.setItem('kitt_last_export', new Date().toISOString());
 }
 
 function exportAllLogs() {
