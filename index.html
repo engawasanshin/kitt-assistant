@@ -969,6 +969,9 @@ async function sendMessage() {
   addMessage('user', text);
   chatHistory.push({ role: 'user', text, timestamp: new Date().toISOString() });
 
+  // ユーザーメッセージを分析して自動記録
+  analyzeAndRecord(text);
+
   const sendBtn = document.getElementById('sendBtn');
   sendBtn.disabled = true;
   const typing = document.getElementById('typingIndicator');
@@ -1820,6 +1823,127 @@ function renderStatusBoard(data) {
   return html;
 }
 
+// --- Recording System ---
+// 相対日時を絶対日付に変換
+function parseRelativeDate(text) {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+  if (text.includes('今日')) {
+    return formatDate(today);
+  } else if (text.includes('昨日')) {
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+    return formatDate(yesterday);
+  } else if (text.includes('明日')) {
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    return formatDate(tomorrow);
+  }
+  // デフォルトは今日
+  return formatDate(today);
+}
+
+function formatDate(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+// 飲み会記録
+function addDrinkingRecord(dateStr, note = '') {
+  const records = JSON.parse(localStorage.getItem('kitt_drinking_records') || '[]');
+  records.push({ date: dateStr, note: note, timestamp: new Date().toISOString() });
+  localStorage.setItem('kitt_drinking_records', JSON.stringify(records));
+  return getDrinkingStats();
+}
+
+function getDrinkingStats() {
+  const records = JSON.parse(localStorage.getItem('kitt_drinking_records') || '[]');
+  const now = new Date();
+  const thisYear = now.getFullYear();
+  const thisMonth = now.getMonth() + 1;
+
+  const yearCount = records.filter(r => r.date.startsWith(`${thisYear}-`)).length;
+  const monthStr = String(thisMonth).padStart(2, '0');
+  const monthCount = records.filter(r => r.date.startsWith(`${thisYear}-${monthStr}`)).length;
+
+  return { yearCount, monthCount, totalCount: records.length };
+}
+
+// Duolingo記録
+function addDuolingoRecord(dateStr, type, note = '') {
+  const records = JSON.parse(localStorage.getItem('kitt_duolingo_records') || '[]');
+  records.push({ date: dateStr, type: type, note: note, timestamp: new Date().toISOString() });
+  localStorage.setItem('kitt_duolingo_records', JSON.stringify(records));
+  return getDuolingoStats();
+}
+
+function getDuolingoStats() {
+  const records = JSON.parse(localStorage.getItem('kitt_duolingo_records') || '[]');
+  const doneRecords = records.filter(r => r.type === 'done').map(r => r.date).sort();
+
+  if (doneRecords.length === 0) {
+    return { streakDays: 0, totalDays: 0, lastDate: null };
+  }
+
+  // 継続日数を計算（最新の記録から遡って連続した日数）
+  let streakDays = 0;
+  const today = new Date();
+  const todayStr = formatDate(today);
+
+  let checkDate = new Date(today);
+  for (let i = 0; i < 365; i++) { // 最大365日まで遡る
+    const checkDateStr = formatDate(checkDate);
+    if (doneRecords.includes(checkDateStr)) {
+      streakDays++;
+      checkDate.setDate(checkDate.getDate() - 1);
+    } else if (checkDateStr === todayStr && i === 0) {
+      // 今日の記録がまだない場合、昨日から開始
+      checkDate.setDate(checkDate.getDate() - 1);
+      continue;
+    } else {
+      break;
+    }
+  }
+
+  return { streakDays, totalDays: doneRecords.length, lastDate: doneRecords[doneRecords.length - 1] };
+}
+
+// ユーザーメッセージを分析して自動記録
+function analyzeAndRecord(text) {
+  const lowerText = text.toLowerCase();
+
+  // 飲み会記録の検出（実績のみ）
+  if ((lowerText.includes('飲み会') || lowerText.includes('飲み') || lowerText.includes('お酒')) &&
+      (lowerText.includes('です') || lowerText.includes('でした') || lowerText.includes('行った') ||
+       lowerText.includes('行く') || lowerText.includes('行きます') || lowerText.includes('参加'))) {
+    const dateStr = parseRelativeDate(text);
+    const stats = addDrinkingRecord(dateStr, text);
+    addSystemMessage(`📊 飲み会記録を追加しました（今年${stats.yearCount}回目、今月${stats.monthCount}回目）`);
+  }
+
+  // Duolingo記録の検出
+  if (lowerText.includes('duolingo') || lowerText.includes('デュオリンゴ')) {
+    const dateStr = parseRelativeDate(text);
+
+    // 実績判定
+    if (lowerText.includes('やりました') || lowerText.includes('やった') || lowerText.includes('終わった') ||
+        lowerText.includes('完了') || lowerText.includes('できた') || lowerText.includes('しました')) {
+      const stats = addDuolingoRecord(dateStr, 'done', text);
+      const streakMsg = stats.streakDays > 0 ? `${stats.streakDays}日連続達成中！` : '';
+      addSystemMessage(`🎯 Duolingo実績を記録しました！ ${streakMsg}素晴らしい！`);
+    }
+    // 計画判定
+    else if (lowerText.includes('やる') || lowerText.includes('やります') || lowerText.includes('予定') ||
+             lowerText.includes('したい') || lowerText.includes('する')) {
+      addDuolingoRecord(dateStr, 'plan', text);
+      addSystemMessage(`📝 Duolingo計画を記録しました。応援しています！`);
+    }
+  }
+}
+
 // --- Dynamic Dashboard System ---
 function updateDashboard() {
   const now = new Date();
@@ -1838,15 +1962,24 @@ function updateDashboard() {
 
     // 飲み会関連のキーワード検出
     if (text.includes('飲み会') || text.includes('飲み') || text.includes('お酒')) {
+      const stats = getDrinkingStats();
       greeting = '📊 飲み会記録';
-      comment = '記録を確認しています。健康管理を意識しましょう。';
-      // TODO: Phase2で実際の統計を表示
+      if (stats.totalCount === 0) {
+        comment = '記録がまだありません。「今日飲み会です」と話しかけると記録されます。';
+      } else {
+        comment = `今年${stats.yearCount}回、今月${stats.monthCount}回です。健康管理を意識しましょう。`;
+      }
     }
     // Duolingo関連のキーワード検出
     else if (text.includes('duolingo') || text.includes('デュオリンゴ') || text.includes('英語') || text.includes('学習')) {
+      const stats = getDuolingoStats();
       greeting = '🎯 学習記録';
-      comment = '継続は力なり。素晴らしい取り組みです！';
-      // TODO: Phase2で実際の統計を表示
+      if (stats.totalDays === 0) {
+        comment = '記録がまだありません。「今日Duolingoやりました」と話しかけると記録されます。';
+      } else {
+        const streakMsg = stats.streakDays > 0 ? `${stats.streakDays}日連続達成中！` : '継続を始めましょう。';
+        comment = `継続は力なり。${streakMsg} これまで合計${stats.totalDays}日実施しました。素晴らしい！`;
+      }
     }
     // リマインダー関連のキーワード検出
     else if (text.includes('リマインド') || text.includes('思い出') || text.includes('忘れ')) {
