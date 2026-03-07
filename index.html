@@ -531,6 +531,12 @@ body {
   </div>
 </div>
 
+<!-- Greeting Message Area -->
+<div class="greeting-area" id="greetingArea" style="padding: 16px; margin: 0 16px; background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); margin-bottom: 12px;">
+  <div id="greetingMessage" style="font-size: 18px; font-weight: bold; color: #00ff00; margin-bottom: 8px;"></div>
+  <div id="contextualComment" style="font-size: 14px; color: #b0b0b0; line-height: 1.5;"></div>
+</div>
+
 <div class="chat-area" id="chatArea">
   <!-- Messages will be inserted here -->
 </div>
@@ -1785,6 +1791,65 @@ function renderStatusBoard(data) {
 
   return html;
 }
+
+// --- Time-based Greeting System ---
+function updateGreeting() {
+  const now = new Date();
+  const hour = now.getHours();
+
+  let greeting = '';
+  let comment = '';
+
+  // 時間帯判定と挨拶生成
+  if (hour >= 5 && hour < 12) {
+    // 朝 (5:00-11:59)
+    greeting = 'おはようございます、塩川さん！';
+    comment = '今日も良い一日になりますように。何かお手伝いできることはありますか？';
+  } else if (hour >= 12 && hour < 18) {
+    // 昼 (12:00-17:59)
+    greeting = 'こんにちは、塩川さん！';
+    if (chatHistory.length > 0) {
+      // 会話履歴があれば振り返り
+      const lastMessage = chatHistory[chatHistory.length - 1];
+      if (lastMessage && lastMessage.role === 'user') {
+        comment = '午前中はどうでしたか？何か気になることがあればお聞かせください。';
+      } else {
+        comment = '引き続き、何でもお気軽にご相談ください。';
+      }
+    } else {
+      comment = '今日はどんなことをお手伝いしましょうか？';
+    }
+  } else {
+    // 夜 (18:00-4:59)
+    greeting = 'こんばんは、塩川さん！';
+    if (chatHistory.length > 0) {
+      comment = '今日一日お疲れ様でした。今日のことを振り返りますか？';
+    } else {
+      comment = 'ごゆっくりお過ごしください。何かお手伝いできることはありますか？';
+    }
+  }
+
+  // DOM更新
+  const greetingEl = document.getElementById('greetingMessage');
+  const commentEl = document.getElementById('contextualComment');
+
+  if (greetingEl) greetingEl.textContent = greeting;
+  if (commentEl) commentEl.textContent = comment;
+}
+
+// 初期表示
+document.addEventListener('DOMContentLoaded', () => {
+  updateGreeting();
+  // 1分ごとに更新
+  setInterval(updateGreeting, 60000);
+});
+
+// メッセージ送信時にも更新（文脈に応じたコメント変更のため）
+const originalSendMessage = sendMessage;
+sendMessage = function() {
+  originalSendMessage.apply(this, arguments);
+  setTimeout(updateGreeting, 1000);
+};
 </script>
 </body>
 </html>
