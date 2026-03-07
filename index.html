@@ -786,12 +786,18 @@ function updateApiCounterUI() {
 }
 
 // --- K.I.T.T. Memory System ---
+// 改良版C案: 3層の記憶構造
 const MEMORY_MD_URL = 'https://drive.usercontent.google.com/download?id=1D6LAVArImOJ_r3jpirLaG0Sc9HfLEqxk&export=download';
+const RECENT_CONVERSATIONS_URL = 'kitt_recent_conversations.md'; // GitHub Pages相対パス（後でGoogle Drive対応）
+const ARCHIVE_SUMMARY_URL = 'kitt_archive_summary.md'; // GitHub Pages相対パス（後でGoogle Drive対応）
+
 let kittMemory = '';
+let recentConversations = '';
+let archiveSummary = '';
 let localMemory = JSON.parse(localStorage.getItem('kitt_local_memory') || '[]');
 
 async function loadKittMemory() {
-  // 1. GitHub Pages上のkitt_memory.md（Claude Codeが更新）
+  // 1. kitt_memory.md（永続的な知見・パターン）
   try {
     const res = await fetch(MEMORY_MD_URL + '?t=' + Date.now());
     if (res.ok) {
@@ -799,23 +805,58 @@ async function loadKittMemory() {
     }
   } catch { /* ignore */ }
 
-  // 2. ローカルメモリ（KITT自身が会話から学んだこと）
+  // 2. kitt_recent_conversations.md（直近の詳細会話）
+  try {
+    const res = await fetch(RECENT_CONVERSATIONS_URL + '?t=' + Date.now());
+    if (res.ok) {
+      recentConversations = await res.text();
+    }
+  } catch { /* ignore */ }
+
+  // 3. kitt_archive_summary.md（古い会話の要約）- オプション、現時点では空
+  try {
+    const res = await fetch(ARCHIVE_SUMMARY_URL + '?t=' + Date.now());
+    if (res.ok) {
+      archiveSummary = await res.text();
+    }
+  } catch { /* ignore */ }
+
+  // 4. ローカルメモリ（KITT自身が会話から学んだこと）
   // localMemoryは既にロード済み
 }
 
 function getMemoryContext() {
   let ctx = '';
+
+  // 1. kitt_memory.md（永続的な知見・パターン）- 最優先
   if (kittMemory) {
     const trimmed = kittMemory.length > 1500
       ? kittMemory.slice(0, 1500) + '\n（省略）'
       : kittMemory;
-    ctx += '\n\n--- K.I.T.T.の記憶 ---\n' + trimmed;
+    ctx += '\n\n--- K.I.T.T.の記憶（永続的な知見） ---\n' + trimmed;
   }
+
+  // 2. kitt_recent_conversations.md（直近の詳細会話）- 文脈・ニュアンス保持
+  if (recentConversations) {
+    // 直近の会話は詳細が重要なので、より多く含める
+    const trimmed = recentConversations.length > 8000
+      ? recentConversations.slice(0, 8000) + '\n（以下省略）'
+      : recentConversations;
+    ctx += '\n\n--- 最近の会話（詳細）---\n' + trimmed;
+  }
+
+  // 3. ローカルメモリ（KITT自身が会話から学んだこと）
   if (localMemory.length > 0) {
     const recent = localMemory.slice(0, 20);
-    ctx += '\n\n--- 最近の会話から学んだこと ---\n';
+    ctx += '\n\n--- この端末での会話から学んだこと ---\n';
     ctx += recent.map(m => `- [${m.date}] ${m.fact}`).join('\n');
   }
+
+  // 4. アーカイブ（必要時のみ）- 現時点では空なのでスキップ
+  // if (archiveSummary && archiveSummary.length > 100) {
+  //   ctx += '\n\n--- 過去の会話（要約）---\n' + archiveSummary.slice(0, 2000);
+  // }
+
   return ctx;
 }
 
