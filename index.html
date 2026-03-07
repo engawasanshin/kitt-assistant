@@ -1820,41 +1820,50 @@ function renderStatusBoard(data) {
   return html;
 }
 
-// --- Time-based Greeting System ---
-function updateGreeting() {
+// --- Dynamic Dashboard System ---
+function updateDashboard() {
   const now = new Date();
   const hour = now.getHours();
 
   let greeting = '';
   let comment = '';
 
-  // 時間帯判定と挨拶生成
-  if (hour >= 5 && hour < 12) {
-    // 朝 (5:00-11:59)
-    greeting = 'おはようございます、塩川さん！';
-    comment = '今日も良い一日になりますように。何かお手伝いできることはありますか？';
-  } else if (hour >= 12 && hour < 18) {
-    // 昼 (12:00-17:59)
-    greeting = 'こんにちは、塩川さん！';
-    if (chatHistory.length > 0) {
-      // 会話履歴があれば振り返り
-      const lastMessage = chatHistory[chatHistory.length - 1];
-      if (lastMessage && lastMessage.role === 'user') {
-        comment = '午前中はどうでしたか？何か気になることがあればお聞かせください。';
-      } else {
-        comment = '引き続き、何でもお気軽にご相談ください。';
-      }
-    } else {
-      comment = '今日はどんなことをお手伝いしましょうか？';
+  // 最後のメッセージを分析して文脈を把握
+  const lastUserMessage = chatHistory.filter(m => m.role === 'user').slice(-1)[0];
+  const lastMessage = chatHistory.slice(-1)[0];
+
+  // 文脈に応じた表示内容を生成
+  if (lastUserMessage && lastUserMessage.text) {
+    const text = lastUserMessage.text.toLowerCase();
+
+    // 飲み会関連のキーワード検出
+    if (text.includes('飲み会') || text.includes('飲み') || text.includes('お酒')) {
+      greeting = '📊 飲み会記録';
+      comment = '記録を確認しています。健康管理を意識しましょう。';
+      // TODO: Phase2で実際の統計を表示
+    }
+    // Duolingo関連のキーワード検出
+    else if (text.includes('duolingo') || text.includes('デュオリンゴ') || text.includes('英語') || text.includes('学習')) {
+      greeting = '🎯 学習記録';
+      comment = '継続は力なり。素晴らしい取り組みです！';
+      // TODO: Phase2で実際の統計を表示
+    }
+    // リマインダー関連のキーワード検出
+    else if (text.includes('リマインド') || text.includes('思い出') || text.includes('忘れ')) {
+      greeting = '⏰ リマインダー';
+      comment = '大切なことを忘れないようにサポートします。';
+      // TODO: Phase3でリマインダー一覧を表示
+    }
+    // 上記以外：時間帯別挨拶にフォールバック
+    else {
+      // デフォルトの時間帯別挨拶
+      greeting = getTimeBasedGreeting(hour);
+      comment = getTimeBasedComment(hour, chatHistory.length);
     }
   } else {
-    // 夜 (18:00-4:59)
-    greeting = 'こんばんは、塩川さん！';
-    if (chatHistory.length > 0) {
-      comment = '今日一日お疲れ様でした。今日のことを振り返りますか？';
-    } else {
-      comment = 'ごゆっくりお過ごしください。何かお手伝いできることはありますか？';
-    }
+    // 初回または会話履歴がない場合：時間帯別挨拶
+    greeting = getTimeBasedGreeting(hour);
+    comment = getTimeBasedComment(hour, chatHistory.length);
   }
 
   // DOM更新
@@ -1865,18 +1874,48 @@ function updateGreeting() {
   if (commentEl) commentEl.textContent = comment;
 }
 
+// 時間帯別挨拶を生成
+function getTimeBasedGreeting(hour) {
+  if (hour >= 5 && hour < 12) {
+    return 'おはようございます、塩川さん！';
+  } else if (hour >= 12 && hour < 18) {
+    return 'こんにちは、塩川さん！';
+  } else {
+    return 'こんばんは、塩川さん！';
+  }
+}
+
+// 時間帯別コメントを生成
+function getTimeBasedComment(hour, historyLength) {
+  if (hour >= 5 && hour < 12) {
+    return '今日も良い一日になりますように。何かお手伝いできることはありますか？';
+  } else if (hour >= 12 && hour < 18) {
+    if (historyLength > 0) {
+      return '引き続き、何でもお気軽にご相談ください。';
+    } else {
+      return '今日はどんなことをお手伝いしましょうか？';
+    }
+  } else {
+    if (historyLength > 0) {
+      return '今日一日お疲れ様でした。今日のことを振り返りますか？';
+    } else {
+      return 'ごゆっくりお過ごしください。何かお手伝いできることはありますか？';
+    }
+  }
+}
+
 // 初期表示
 document.addEventListener('DOMContentLoaded', () => {
-  updateGreeting();
+  updateDashboard();
   // 1分ごとに更新
-  setInterval(updateGreeting, 60000);
+  setInterval(updateDashboard, 60000);
 });
 
 // メッセージ送信時にも更新（文脈に応じたコメント変更のため）
 const originalSendMessage = sendMessage;
 sendMessage = function() {
   originalSendMessage.apply(this, arguments);
-  setTimeout(updateGreeting, 1000);
+  setTimeout(updateDashboard, 1000);
 };
 </script>
 </body>
