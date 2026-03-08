@@ -1082,14 +1082,29 @@ async function countdownWait(totalSec) {
   msgEl.className = 'system-msg';
   msgEl.style.color = '#cc8844';
   const chatArea = document.getElementById('chatMessages');
-  chatArea.appendChild(msgEl);
-  chatArea.scrollTop = chatArea.scrollHeight;
+
+  // Null チェック: chatArea が存在しない場合はコンソールログのみ
+  if (chatArea) {
+    chatArea.appendChild(msgEl);
+    chatArea.scrollTop = chatArea.scrollHeight;
+  } else {
+    console.warn('chatMessages element not found. Countdown will proceed without UI update.');
+  }
 
   for (let s = totalSec; s > 0; s--) {
-    msgEl.textContent = `⏳ 待機中... 残り ${s}秒`;
+    if (chatArea) {
+      msgEl.textContent = `⏳ 待機中... 残り ${s}秒`;
+    } else {
+      console.log(`⏳ 待機中... 残り ${s}秒`);
+    }
     await new Promise(r => setTimeout(r, 1000));
   }
-  msgEl.textContent = '✓ 待機完了。送信中...';
+
+  if (chatArea) {
+    msgEl.textContent = '✓ 待機完了。送信中...';
+  } else {
+    console.log('✓ 待機完了。送信中...');
+  }
   updateApiCounterUI();
 }
 
@@ -1792,28 +1807,33 @@ function renderStatusBoard(data) {
   const tpmColor = tpm >= 250000 ? '#ff4444' : tpm >= 200000 ? '#cccc44' : '#44cc44';
   const totalTokensK = Math.round((usage.totalTokens || 0) / 1000);
 
-  html += '<div class="status-section-title">K.I.T.T. System Health</div>';
+  html += '<div class="status-section-title">K.I.T.T. System Health - API制約詳細</div>';
   html += `<div class="status-card">
     <div class="status-card-detail" style="margin-bottom:6px;">
-      <span style="color:${healthColor};">&#9679;</span> RPD: <strong style="color:${healthColor};">${remaining}</strong> / 1,000 (日次リクエスト)
+      <span style="color:${healthColor};">&#9679;</span> <strong>RPD</strong> (日次リクエスト上限): <strong style="color:${healthColor};">${remaining}</strong> / 1,000 残り
     </div>
-    <div style="background:#1a1a1a;height:8px;border-radius:4px;overflow:hidden;margin-bottom:6px;">
+    <div style="background:#1a1a1a;height:8px;border-radius:4px;overflow:hidden;margin-bottom:8px;">
       <div style="background:${healthColor};height:100%;width:${barWidth}%;border-radius:4px;transition:width 0.3s;"></div>
     </div>
     <div class="status-card-detail" style="margin-bottom:4px;">
-      <span style="color:${rpmColor};">&#9679;</span> RPM: <strong style="color:${rpmColor};">${rpm}</strong> / 15 (分あたりリクエスト)
-      ${rpmWait > 0 ? `<span style="color:#cc8844;"> ⏳ 待機必要: ${rpmWait}秒</span>` : ''}
+      <span style="color:${rpmColor};">&#9679;</span> <strong>RPM</strong> (分あたりリクエスト): <strong style="color:${rpmColor};">${rpm}</strong> / 15
+      ${rpmWait > 0 ? `<br><span style="color:#ff8844;font-weight:600;margin-left:18px;">⚠️ RPM制限到達 - 次送信まで ${rpmWait}秒待機が必要</span>` : '<span style="color:#44cc44;margin-left:10px;">✓ 送信可能</span>'}
     </div>
-    <div class="status-card-detail" style="margin-bottom:4px;">
-      <span style="color:${tpmColor};">&#9679;</span> TPM: <strong style="color:${tpmColor};">${tpmK}k</strong> / 250k (分あたりトークン)
+    <div class="status-card-detail" style="margin-bottom:6px;">
+      <span style="color:${tpmColor};">&#9679;</span> <strong>TPM</strong> (分あたりトークン): <strong style="color:${tpmColor};">${tpmK}k</strong> / 250k
+      ${tpm >= 250000 ? '<span style="color:#ff8844;margin-left:10px;">⚠️ 制限到達</span>' : ''}
     </div>
-    <div class="status-card-detail" style="margin-bottom:4px;">
-      &#128200; 日次トークン累計: <strong>${totalTokensK}k</strong> tokens
+    <div class="status-card-detail" style="margin-bottom:8px;padding-top:6px;border-top:1px solid #333;">
+      📊 日次トークン累計: <strong>${totalTokensK}k</strong> tokens
     </div>
-    <div class="status-card-detail">
-      &#9989; 成功: ${usage.success} &nbsp; &#9888; 制限: ${usage.rateLimit} &nbsp; &#10060; エラー: ${usage.error}
+    <div class="status-card-detail" style="background:#1a1a1a;padding:6px;border-radius:4px;">
+      <div style="margin-bottom:2px;">✅ 成功: <strong style="color:#44cc44;">${usage.success}</strong></div>
+      <div style="margin-bottom:2px;">⚠️ レート制限: <strong style="color:#ff8844;">${usage.rateLimit}</strong> ${usage.rateLimit > 0 ? '(429エラー発生回数)' : ''}</div>
+      <div>❌ エラー: <strong style="color:#ff4444;">${usage.error}</strong></div>
     </div>
-    <div class="status-card-detail" style="color:#666;margin-top:4px;">日付: ${usage.date || getToday()} | リセット: 太平洋時間 0:00</div>
+    <div class="status-card-detail" style="color:#666;margin-top:8px;font-size:10px;">
+      📅 集計日: ${usage.date || getToday()} | リセット: 太平洋時間 0:00 (日本時間 17:00)
+    </div>
   </div>`;
 
   // Projects
