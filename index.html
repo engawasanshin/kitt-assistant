@@ -515,6 +515,7 @@ body {
 <div class="header">
   <div class="header-left">
     <button class="status-btn" onclick="openStatusBoard()" title="ステータスボード">&#128202;</button>
+    <button class="status-btn" onclick="refreshMemory()" title="記憶を更新" id="refreshMemoryBtn">&#128259;</button>
     <div class="api-counter" onclick="openStatusBoard()" title="API使用状況"><span class="api-dot" id="apiDot"></span><span id="apiCounterText">--</span></div>
   </div>
   <h1>K.I.T.T.</h1>
@@ -823,6 +824,49 @@ async function loadKittMemory() {
 
   // 4. ローカルメモリ（KITT自身が会話から学んだこと）
   // localMemoryは既にロード済み
+}
+
+// 記憶を手動で更新する関数（ボタン用）
+async function refreshMemory() {
+  const btn = document.getElementById('refreshMemoryBtn');
+  const originalText = btn.textContent;
+
+  try {
+    // ローディング表示
+    btn.textContent = '⏳';
+    btn.disabled = true;
+
+    // 記憶を再読み込み
+    await loadKittMemory();
+
+    // 成功フィードバック
+    btn.textContent = '✓';
+    addSystemMessage('記憶を更新しました（Memory: ' + (kittMemory ? Math.floor(kittMemory.length/1000) + 'k' : '0') + ', Recent: ' + (recentConversations ? Math.floor(recentConversations.length/1000) + 'k' : '0') + '）');
+
+    // デバッグ情報をコンソールに出力
+    console.log('Memory updated:', {
+      kittMemory: kittMemory.length,
+      recentConversations: recentConversations.length,
+      archiveSummary: archiveSummary.length
+    });
+
+    // 1秒後にアイコンを元に戻す
+    setTimeout(() => {
+      btn.textContent = originalText;
+      btn.disabled = false;
+    }, 1000);
+  } catch (error) {
+    // エラーフィードバック
+    btn.textContent = '✗';
+    addSystemMessage('記憶の更新に失敗しました: ' + error.message);
+    console.error('Memory refresh error:', error);
+
+    // 2秒後にアイコンを元に戻す
+    setTimeout(() => {
+      btn.textContent = originalText;
+      btn.disabled = false;
+    }, 2000);
+  }
 }
 
 function getMemoryContext() {
