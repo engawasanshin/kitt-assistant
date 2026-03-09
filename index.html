@@ -518,7 +518,10 @@ body {
     <button class="status-btn" onclick="refreshMemory()" title="記憶を更新" id="refreshMemoryBtn">&#128259;</button>
     <div class="api-counter" onclick="openStatusBoard()" title="API使用状況"><span class="api-dot" id="apiDot"></span><span id="apiCounterText">--</span></div>
   </div>
-  <h1>K.I.T.T.</h1>
+  <div style="display: flex; flex-direction: column; align-items: center;">
+    <h1>K.I.T.T.</h1>
+    <div id="currentTime" style="font-size: 10px; color: #888; letter-spacing: 1px; margin-top: 2px;">--:--:--</div>
+  </div>
   <div class="header-right">
     <button class="save-btn" onclick="exportFullConversation()" title="会話全文ログ">&#128221;</button>
     <button class="save-btn" onclick="analyzeAndSave()" title="保存&分析">&#128190;</button>
@@ -684,7 +687,7 @@ const DEFAULT_SYSTEM_PROMPT = `あなたはK.I.T.T.（Knight Industries Two Thou
 - ユーザーが忘れていそうな重要事項を適切なタイミングでリマインドしてください
 - 例: 「前回、○○について話していましたね。進捗はいかがですか？」`;
 
-const GEMINI_MODEL = 'gemini-2.5-flash-lite';
+const GEMINI_MODEL = 'gemini-1.5-flash-001';  // 有料版（プライバシー保護、学習されない）
 
 // --- State ---
 let apiKey = localStorage.getItem('kitt_api_key') || '';
@@ -734,8 +737,33 @@ function getRpmWaitSec() {
   return Math.ceil((oldest + 60000 - now) / 1000) + 1;
 }
 
+// RPD（日次リクエスト）制限チェック: 1000/日に達しているか
+function isRpdLimitReached() {
+  const usage = getApiUsage();
+  const total = usage.success + usage.rateLimit + usage.error;
+  return total >= 1000;
+}
+
 function recordApiCall(type, tokenCount) {
   const usage = getApiUsage();
+
+  // デバッグログ: 誰がrecordApiCallを呼んだか追跡
+  const stack = new Error().stack;
+  const debugInfo = {
+    type,
+    tokenCount,
+    currentTotal: usage.success + usage.rateLimit + usage.error,
+    timestamp: new Date().toISOString(),
+    caller: stack.split('\n')[2]  // 呼び出し元の行番号
+  };
+  console.log('[DEBUG] recordApiCall:', debugInfo);
+
+  // デバッグ履歴をlocalStorageに保存（最新100件のみ）
+  const debugLog = JSON.parse(localStorage.getItem('kitt_debug_log') || '[]');
+  debugLog.push(debugInfo);
+  if (debugLog.length > 100) debugLog.shift();
+  localStorage.setItem('kitt_debug_log', JSON.stringify(debugLog));
+
   if (type === 'success') usage.success++;
   else if (type === 'rateLimit') usage.rateLimit++;
   else if (type === 'error') usage.error++;
@@ -904,6 +932,23 @@ function getMemoryContext() {
   return ctx;
 }
 
+// 現在時刻のコンテキストを生成
+function getCurrentTimeContext() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  const hours = String(now.getHours()).padStart(2, '0');
+  const minutes = String(now.getMinutes()).padStart(2, '0');
+  const weekday = ['日', '月', '火', '水', '木', '金', '土'][now.getDay()];
+
+  const timeOfDay =
+    (now.getHours() >= 5 && now.getHours() < 12) ? '朝' :
+    (now.getHours() >= 12 && now.getHours() < 18) ? '昼' : '夜';
+
+  return `\n\n--- 現在時刻 ---\n日時: ${year}年${month}月${day}日（${weekday}曜日）${hours}:${minutes}\n時間帯: ${timeOfDay}\n\n【重要】この時刻情報を必ず考慮して応答してください。挨拶や提案は現在の時間帯に合わせてください。`;
+}
+
 function addLocalMemory(fact) {
   localMemory.unshift({ date: getToday(), fact });
   if (localMemory.length > 50) localMemory.length = 50;
@@ -1012,7 +1057,14 @@ function addMessage(role, text) {
   const div = document.createElement('div');
   div.className = `message ${role}`;
   const label = role === 'user' ? 'You' : 'K.I.T.T.';
-  div.innerHTML = `<div class="label">${label}</div>${escapeHtml(text)}`;
+
+  // タイムスタンプを追加
+  const now = new Date();
+  const hours = String(now.getHours()).padStart(2, '0');
+  const minutes = String(now.getMinutes()).padStart(2, '0');
+  const timeStamp = `${hours}:${minutes}`;
+
+  div.innerHTML = `<div class="label">${label} <span style="font-size: 10px; color: #666; margin-left: 4px;">${timeStamp}</span></div>${escapeHtml(text)}`;
   chatArea.appendChild(div);
   chatArea.scrollTop = chatArea.scrollHeight;
 }
@@ -1049,6 +1101,12 @@ async function sendMessage() {
     return;
   }
 
+  // RPD制限チェック: 1000/日に達している場合は送信をブロック
+  if (isRpdLimitReached()) {
+    addSystemMessage('⚠️ 本日のAPI使用上限（1000リクエスト）に達しました。明日0時（太平洋時間）にリセットされます。');
+    return;
+  }
+
   input.value = '';
   autoResize(input);
   addMessage('user', text);
@@ -1076,10 +1134,18 @@ async function sendMessage() {
 
   sendBtn.disabled = false;
   input.focus();
+
+  // ダッシュボードを更新（文脈に応じたコメント変更のため）
+  setTimeout(updateDashboard, 1000);
 }
 
 // --- Retry helper for rate limit errors ---
 async function fetchWithRetry(url, options, maxRetries = 2) {
+  // RPD事前チェック: 1000/日に達している場合はエラー
+  if (isRpdLimitReached()) {
+    throw new Error('本日のAPI使用上限（1000リクエスト）に達しました。明日0時（太平洋時間）にリセットされます。');
+  }
+
   // RPM事前チェック: 15/分に達している場合は送信前に待機
   const preWait = getRpmWaitSec();
   if (preWait > 0) {
@@ -1175,7 +1241,7 @@ async function callGemini(userText) {
   const body = {
     contents,
     systemInstruction: {
-      parts: [{ text: systemPrompt + getMemoryContext() + statusContext }]
+      parts: [{ text: systemPrompt + getCurrentTimeContext() + getMemoryContext() + statusContext }]
     },
     generationConfig: {
       temperature: 0.8,
@@ -1840,8 +1906,10 @@ function renderStatusBoard(data) {
   const usage = getApiUsage();
   const total = usage.success + usage.rateLimit + usage.error;
   const remaining = Math.max(0, 1000 - total);
-  const healthColor = remaining <= 50 ? '#ff4444' : remaining <= 200 ? '#cccc44' : '#44cc44';
-  const barWidth = Math.max(2, (remaining / 1000) * 100);
+  // 色は使用量ベース: 950以上=赤、800以上=黄、それ以下=緑
+  const healthColor = total >= 950 ? '#ff4444' : total >= 800 ? '#cccc44' : '#44cc44';
+  // プログレスバーの幅は使用量のパーセンテージ
+  const barWidth = Math.min(100, (total / 1000) * 100);
 
   const rpm = getRpm();
   const rpmColor = rpm >= 15 ? '#ff4444' : rpm >= 12 ? '#cccc44' : '#44cc44';
@@ -1854,7 +1922,7 @@ function renderStatusBoard(data) {
   html += '<div class="status-section-title">K.I.T.T. System Health - API制約詳細</div>';
   html += `<div class="status-card">
     <div class="status-card-detail" style="margin-bottom:6px;">
-      <span style="color:${healthColor};">&#9679;</span> <strong>RPD</strong> (日次リクエスト上限): <strong style="color:${healthColor};">${remaining}</strong> / 1,000 残り
+      <span style="color:${healthColor};">&#9679;</span> <strong>RPD</strong> (日次リクエスト上限): <strong style="color:${healthColor};">${total}</strong> / 1,000
     </div>
     <div style="background:#1a1a1a;height:8px;border-radius:4px;overflow:hidden;margin-bottom:8px;">
       <div style="background:${healthColor};height:100%;width:${barWidth}%;border-radius:4px;transition:width 0.3s;"></div>
@@ -1869,6 +1937,15 @@ function renderStatusBoard(data) {
     </div>
     <div class="status-card-detail" style="margin-bottom:8px;padding-top:6px;border-top:1px solid #333;">
       📊 日次トークン累計: <strong>${totalTokensK}k</strong> tokens
+    </div>
+    <div class="status-card-detail" style="background:#1a2a1a;padding:8px;border-radius:4px;margin-bottom:8px;">
+      <div style="font-weight:600;color:#88cc88;margin-bottom:4px;">💰 実際のコスト</div>
+      <div style="font-size:11px;color:#aaa;margin-bottom:6px;">※ Gemini 1.5 Flash 料金で計算</div>
+      <div style="margin-bottom:2px;">今日: <strong style="color:#88cc88;">$${((usage.totalTokens || 0) / 1000000 * 0.15).toFixed(4)}</strong> (約${Math.round((usage.totalTokens || 0) / 1000000 * 0.15 * 155)}円)</div>
+      <div style="margin-bottom:4px;">今月（30日換算）: <strong style="color:#cccc88;">$${((usage.totalTokens || 0) / 1000000 * 0.15 * 30).toFixed(2)}</strong> (約${Math.round((usage.totalTokens || 0) / 1000000 * 0.15 * 155 * 30)}円)</div>
+      <div style="color:#666;font-size:10px;margin-top:4px;padding-top:4px;border-top:1px solid #333;">入力+出力の平均単価: $0.15/1M tokens</div>
+      <div style="color:#44cc44;font-size:10px;">✅ 現在: <strong style="color:#44cc44;">有料版（gemini-1.5-flash-001）</strong></div>
+      <div style="color:#666;font-size:10px;">プライバシー保護: 学習データに使われません</div>
     </div>
     <div class="status-card-detail" style="background:#1a1a1a;padding:6px;border-radius:4px;">
       <div style="margin-bottom:2px;">✅ 成功: <strong style="color:#44cc44;">${usage.success}</strong></div>
@@ -1974,7 +2051,19 @@ function getDrinkingStats() {
   const monthStr = String(thisMonth).padStart(2, '0');
   const monthCount = records.filter(r => r.date.startsWith(`${thisYear}-${monthStr}`)).length;
 
-  return { yearCount, monthCount, totalCount: records.length };
+  // 最新記録のタイムスタンプを取得
+  let lastRecordTime = null;
+  if (records.length > 0) {
+    const lastRecord = records[records.length - 1];
+    if (lastRecord.timestamp) {
+      const dt = new Date(lastRecord.timestamp);
+      const hours = String(dt.getHours()).padStart(2, '0');
+      const minutes = String(dt.getMinutes()).padStart(2, '0');
+      lastRecordTime = `${hours}:${minutes}`;
+    }
+  }
+
+  return { yearCount, monthCount, totalCount: records.length, lastRecordTime };
 }
 
 // Duolingo記録
@@ -1990,7 +2079,7 @@ function getDuolingoStats() {
   const doneRecords = records.filter(r => r.type === 'done').map(r => r.date).sort();
 
   if (doneRecords.length === 0) {
-    return { streakDays: 0, totalDays: 0, lastDate: null };
+    return { streakDays: 0, totalDays: 0, lastDate: null, lastRecordTime: null };
   }
 
   // 継続日数を計算（最新の記録から遡って連続した日数）
@@ -2013,7 +2102,19 @@ function getDuolingoStats() {
     }
   }
 
-  return { streakDays, totalDays: doneRecords.length, lastDate: doneRecords[doneRecords.length - 1] };
+  // 最新記録のタイムスタンプを取得
+  let lastRecordTime = null;
+  if (records.length > 0) {
+    const lastRecord = records[records.length - 1];
+    if (lastRecord.timestamp) {
+      const dt = new Date(lastRecord.timestamp);
+      const hours = String(dt.getHours()).padStart(2, '0');
+      const minutes = String(dt.getMinutes()).padStart(2, '0');
+      lastRecordTime = `${hours}:${minutes}`;
+    }
+  }
+
+  return { streakDays, totalDays: doneRecords.length, lastDate: doneRecords[doneRecords.length - 1], lastRecordTime };
 }
 
 // ユーザーメッセージを分析して自動記録
@@ -2072,7 +2173,8 @@ function updateDashboard() {
       if (stats.totalCount === 0) {
         comment = '記録がまだありません。「今日飲み会です」と話しかけると記録されます。';
       } else {
-        comment = `今年${stats.yearCount}回、今月${stats.monthCount}回です。健康管理を意識しましょう。`;
+        const timeInfo = stats.lastRecordTime ? ` (最新: ${stats.lastRecordTime})` : '';
+        comment = `今年${stats.yearCount}回、今月${stats.monthCount}回です${timeInfo}。健康管理を意識しましょう。`;
       }
     }
     // Duolingo関連のキーワード検出
@@ -2083,7 +2185,8 @@ function updateDashboard() {
         comment = '記録がまだありません。「今日Duolingoやりました」と話しかけると記録されます。';
       } else {
         const streakMsg = stats.streakDays > 0 ? `${stats.streakDays}日連続達成中！` : '継続を始めましょう。';
-        comment = `継続は力なり。${streakMsg} これまで合計${stats.totalDays}日実施しました。素晴らしい！`;
+        const timeInfo = stats.lastRecordTime ? ` (最新: ${stats.lastRecordTime})` : '';
+        comment = `継続は力なり。${streakMsg} これまで合計${stats.totalDays}日実施しました${timeInfo}。素晴らしい！`;
       }
     }
     // リマインダー関連のキーワード検出
@@ -2114,12 +2217,17 @@ function updateDashboard() {
 
 // 時間帯別挨拶を生成
 function getTimeBasedGreeting(hour) {
+  const now = new Date();
+  const hours = String(now.getHours()).padStart(2, '0');
+  const minutes = String(now.getMinutes()).padStart(2, '0');
+  const timeStr = `${hours}:${minutes}`;
+
   if (hour >= 5 && hour < 12) {
-    return 'おはようございます、塩川さん！';
+    return `おはようございます、塩川さん！ (${timeStr})`;
   } else if (hour >= 12 && hour < 18) {
-    return 'こんにちは、塩川さん！';
+    return `こんにちは、塩川さん！ (${timeStr})`;
   } else {
-    return 'こんばんは、塩川さん！';
+    return `こんばんは、塩川さん！ (${timeStr})`;
   }
 }
 
@@ -2145,19 +2253,37 @@ function getTimeBasedComment(hour, historyLength) {
   }
 }
 
+// 時計更新関数
+function updateClock() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  const hours = String(now.getHours()).padStart(2, '0');
+  const minutes = String(now.getMinutes()).padStart(2, '0');
+  const seconds = String(now.getSeconds()).padStart(2, '0');
+
+  const timeStr = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+  const clockEl = document.getElementById('currentTime');
+  if (clockEl) {
+    clockEl.textContent = timeStr;
+  }
+}
+
 // 初期表示
 document.addEventListener('DOMContentLoaded', () => {
+  console.log('[DEBUG] KITT loaded at:', new Date().toISOString());
+  console.log('[DEBUG] Current API usage:', getApiUsage());
+
   updateDashboard();
-  // 1分ごとに更新
+  updateClock();
+  // 1分ごとにダッシュボード更新
   setInterval(updateDashboard, 60000);
+  // 1秒ごとに時計更新
+  setInterval(updateClock, 1000);
 });
 
-// メッセージ送信時にも更新（文脈に応じたコメント変更のため）
-const originalSendMessage = sendMessage;
-sendMessage = function() {
-  originalSendMessage.apply(this, arguments);
-  setTimeout(updateDashboard, 1000);
-};
+// メッセージ送信時の更新は、sendMessage関数内で直接呼び出すように変更
 </script>
 </body>
 </html>
