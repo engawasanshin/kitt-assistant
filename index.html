@@ -1245,7 +1245,7 @@ async function callGemini(userText) {
     },
     generationConfig: {
       temperature: 0.8,
-      maxOutputTokens: 1024
+      maxOutputTokens: 8192  // Gemini 2.5のThinking機能用に十分な容量を確保
     }
   };
 
