@@ -737,11 +737,12 @@ function getRpmWaitSec() {
   return Math.ceil((oldest + 60000 - now) / 1000) + 1;
 }
 
-// RPD（日次リクエスト）制限チェック: 1000/日に達しているか
+// RPD（日次リクエスト）制限チェック: 5000/日に達しているか（有料版）
+const RPD_LIMIT = 5000;  // Paid tier: 5000 requests per day
 function isRpdLimitReached() {
   const usage = getApiUsage();
   const total = usage.success + usage.rateLimit + usage.error;
-  return total >= 1000;
+  return total >= RPD_LIMIT;
 }
 
 function recordApiCall(type, tokenCount) {
@@ -785,7 +786,7 @@ let rpmTimerId = null;
 function updateApiCounterUI() {
   const usage = getApiUsage();
   const total = usage.success + usage.rateLimit + usage.error;
-  const remaining = Math.max(0, 1000 - total);
+  const remaining = Math.max(0, RPD_LIMIT - total);
   const rpm = getRpm();
   const dot = document.getElementById('apiDot');
   const text = document.getElementById('apiCounterText');
@@ -1101,9 +1102,9 @@ async function sendMessage() {
     return;
   }
 
-  // RPD制限チェック: 1000/日に達している場合は送信をブロック
+  // RPD制限チェック: 5000/日に達している場合は送信をブロック
   if (isRpdLimitReached()) {
-    addSystemMessage('⚠️ 本日のAPI使用上限（1000リクエスト）に達しました。明日0時（太平洋時間）にリセットされます。');
+    addSystemMessage('⚠️ 本日のAPI使用上限（5000リクエスト）に達しました。明日0時（太平洋時間）にリセットされます。');
     return;
   }
 
@@ -1141,9 +1142,9 @@ async function sendMessage() {
 
 // --- Retry helper for rate limit errors ---
 async function fetchWithRetry(url, options, maxRetries = 2) {
-  // RPD事前チェック: 1000/日に達している場合はエラー
+  // RPD事前チェック: 5000/日に達している場合はエラー
   if (isRpdLimitReached()) {
-    throw new Error('本日のAPI使用上限（1000リクエスト）に達しました。明日0時（太平洋時間）にリセットされます。');
+    throw new Error('本日のAPI使用上限（5000リクエスト）に達しました。明日0時（太平洋時間）にリセットされます。');
   }
 
   // RPM事前チェック: 15/分に達している場合は送信前に待機
@@ -1905,11 +1906,11 @@ function renderStatusBoard(data) {
   // K.I.T.T. Health (API usage)
   const usage = getApiUsage();
   const total = usage.success + usage.rateLimit + usage.error;
-  const remaining = Math.max(0, 1000 - total);
-  // 色は使用量ベース: 950以上=赤、800以上=黄、それ以下=緑
-  const healthColor = total >= 950 ? '#ff4444' : total >= 800 ? '#cccc44' : '#44cc44';
+  const remaining = Math.max(0, RPD_LIMIT - total);
+  // 色は使用量ベース: 4750以上=赤、4000以上=黄、それ以下=緑（有料版基準）
+  const healthColor = total >= 4750 ? '#ff4444' : total >= 4000 ? '#cccc44' : '#44cc44';
   // プログレスバーの幅は使用量のパーセンテージ
-  const barWidth = Math.min(100, (total / 1000) * 100);
+  const barWidth = Math.min(100, (total / RPD_LIMIT) * 100);
 
   const rpm = getRpm();
   const rpmColor = rpm >= 15 ? '#ff4444' : rpm >= 12 ? '#cccc44' : '#44cc44';
@@ -1922,7 +1923,7 @@ function renderStatusBoard(data) {
   html += '<div class="status-section-title">K.I.T.T. System Health - API制約詳細</div>';
   html += `<div class="status-card">
     <div class="status-card-detail" style="margin-bottom:6px;">
-      <span style="color:${healthColor};">&#9679;</span> <strong>RPD</strong> (日次リクエスト上限): <strong style="color:${healthColor};">${total}</strong> / 1,000
+      <span style="color:${healthColor};">&#9679;</span> <strong>RPD</strong> (日次リクエスト上限): <strong style="color:${healthColor};">${total}</strong> / 5,000 <span style="font-size:10px;color:#888;">(有料版)</span>
     </div>
     <div style="background:#1a1a1a;height:8px;border-radius:4px;overflow:hidden;margin-bottom:8px;">
       <div style="background:${healthColor};height:100%;width:${barWidth}%;border-radius:4px;transition:width 0.3s;"></div>
