@@ -2118,6 +2118,219 @@ function getDuolingoStats() {
   return { streakDays, totalDays: doneRecords.length, lastDate: doneRecords[doneRecords.length - 1], lastRecordTime };
 }
 
+// TOEIC学習記録
+function addToeicStudyRecord(dateStr, category, detail, note = '') {
+  const records = JSON.parse(localStorage.getItem('kitt_toeic_records') || '[]');
+  records.push({
+    date: dateStr,
+    category: category, // 'vocab', 'listening', 'reading', 'mock_test', 'part1-7', etc.
+    detail: detail, // '金フレ', '公式問題集', 'Part 3', etc.
+    note: note,
+    timestamp: new Date().toISOString()
+  });
+  localStorage.setItem('kitt_toeic_records', JSON.stringify(records));
+  return getToeicStats();
+}
+
+function getToeicStats() {
+  const records = JSON.parse(localStorage.getItem('kitt_toeic_records') || '[]');
+
+  if (records.length === 0) {
+    return {
+      totalStudyDays: 0,
+      weekProgress: [0, 0, 0, 0],
+      daysUntilTest: 0,
+      lastRecordTime: null,
+      todayStudied: false,
+      weeklyBreakdown: {}
+    };
+  }
+
+  // TOEIC試験日: 2026年4月 (仮に4月26日とする)
+  const testDate = new Date('2026-04-26');
+  const today = new Date();
+  const daysUntilTest = Math.ceil((testDate - today) / (1000 * 60 * 60 * 24));
+
+  // 学習開始日: 2026-03-11
+  const startDate = new Date('2026-03-11');
+  const totalDays = Math.ceil((today - startDate) / (1000 * 60 * 60 * 24)) + 1;
+  const currentWeek = Math.min(Math.ceil(totalDays / 7), 4);
+
+  // ユニーク学習日数を計算
+  const uniqueDates = [...new Set(records.map(r => r.date))];
+  const totalStudyDays = uniqueDates.length;
+
+  // 今日の学習記録があるか
+  const todayStr = formatDate(today);
+  const todayStudied = uniqueDates.includes(todayStr);
+
+  // Week別進捗を計算 (各週7日 = 100%)
+  const weekProgress = [0, 0, 0, 0];
+  for (let week = 0; week < 4; week++) {
+    const weekStartDate = new Date(startDate);
+    weekStartDate.setDate(weekStartDate.getDate() + week * 7);
+    const weekEndDate = new Date(weekStartDate);
+    weekEndDate.setDate(weekEndDate.getDate() + 6);
+
+    const weekRecords = records.filter(r => {
+      const recordDate = new Date(r.date);
+      return recordDate >= weekStartDate && recordDate <= weekEndDate;
+    });
+
+    const uniqueWeekDates = [...new Set(weekRecords.map(r => r.date))];
+    weekProgress[week] = Math.min((uniqueWeekDates.length / 7) * 100, 100);
+  }
+
+  // カテゴリ別集計
+  const weeklyBreakdown = {};
+  ['vocab', 'listening', 'reading', 'mock_test'].forEach(cat => {
+    weeklyBreakdown[cat] = records.filter(r => r.category === cat).length;
+  });
+
+  // 最新記録のタイムスタンプを取得
+  let lastRecordTime = null;
+  if (records.length > 0) {
+    const lastRecord = records[records.length - 1];
+    if (lastRecord.timestamp) {
+      const dt = new Date(lastRecord.timestamp);
+      const hours = String(dt.getHours()).padStart(2, '0');
+      const minutes = String(dt.getMinutes()).padStart(2, '0');
+      lastRecordTime = `${hours}:${minutes}`;
+    }
+  }
+
+  return {
+    totalStudyDays,
+    weekProgress,
+    daysUntilTest,
+    lastRecordTime,
+    todayStudied,
+    weeklyBreakdown,
+    currentWeek
+  };
+}
+
+// 家計簿記録（OCR連携）
+function addExpenseRecord(dateStr, amount, category, store = '', note = '') {
+  const records = JSON.parse(localStorage.getItem('kitt_expense_records') || '[]');
+  records.push({
+    date: dateStr,
+    amount: amount,
+    category: category, // '食費', '交通費', '日用品', 'その他' etc.
+    store: store,
+    note: note,
+    timestamp: new Date().toISOString()
+  });
+  localStorage.setItem('kitt_expense_records', JSON.stringify(records));
+  return getExpenseStats();
+}
+
+function getExpenseStats() {
+  const records = JSON.parse(localStorage.getItem('kitt_expense_records') || '[]');
+
+  if (records.length === 0) {
+    return {
+      monthTotal: 0,
+      todayTotal: 0,
+      categoryBreakdown: {},
+      recordCount: 0,
+      lastRecordTime: null
+    };
+  }
+
+  const now = new Date();
+  const thisYear = now.getFullYear();
+  const thisMonth = now.getMonth() + 1;
+  const monthStr = `${thisYear}-${String(thisMonth).padStart(2, '0')}`;
+  const todayStr = formatDate(now);
+
+  // 今月の記録
+  const monthRecords = records.filter(r => r.date.startsWith(monthStr));
+  const monthTotal = monthRecords.reduce((sum, r) => sum + (r.amount || 0), 0);
+
+  // 今日の記録
+  const todayRecords = records.filter(r => r.date === todayStr);
+  const todayTotal = todayRecords.reduce((sum, r) => sum + (r.amount || 0), 0);
+
+  // カテゴリ別集計（今月）
+  const categoryBreakdown = {};
+  monthRecords.forEach(r => {
+    const cat = r.category || 'その他';
+    categoryBreakdown[cat] = (categoryBreakdown[cat] || 0) + (r.amount || 0);
+  });
+
+  // 最新記録のタイムスタンプを取得
+  let lastRecordTime = null;
+  if (records.length > 0) {
+    const lastRecord = records[records.length - 1];
+    if (lastRecord.timestamp) {
+      const dt = new Date(lastRecord.timestamp);
+      const hours = String(dt.getHours()).padStart(2, '0');
+      const minutes = String(dt.getMinutes()).padStart(2, '0');
+      lastRecordTime = `${hours}:${minutes}`;
+    }
+  }
+
+  return {
+    monthTotal,
+    todayTotal,
+    categoryBreakdown,
+    recordCount: records.length,
+    lastRecordTime,
+    monthRecordCount: monthRecords.length
+  };
+}
+
+// レシートテキストの解析（簡易版）
+function parseReceiptText(text) {
+  const lines = text.split('\n').map(l => l.trim()).filter(l => l);
+
+  let amount = null;
+  let store = '';
+  let category = 'その他';
+
+  // 金額抽出（¥1,280 または 1280円 のパターン）
+  for (const line of lines) {
+    // ¥1,280 形式
+    const yenMatch = line.match(/¥\s*([0-9,]+)/);
+    if (yenMatch) {
+      amount = parseInt(yenMatch[1].replace(/,/g, ''));
+      break;
+    }
+    // 1280円 形式
+    const circleMatch = line.match(/([0-9,]+)\s*円/);
+    if (circleMatch) {
+      amount = parseInt(circleMatch[1].replace(/,/g, ''));
+      break;
+    }
+    // 数字のみの行（合計額の可能性）
+    const numMatch = line.match(/^([0-9,]+)$/);
+    if (numMatch && !amount) {
+      const candidate = parseInt(numMatch[1].replace(/,/g, ''));
+      if (candidate > 10) { // 10円以上なら金額として認識
+        amount = candidate;
+      }
+    }
+  }
+
+  // 店舗名抽出（最初の数行から）
+  if (lines.length > 0) {
+    store = lines[0];
+  }
+
+  // カテゴリ推定（キーワードベース）
+  const fullText = text.toLowerCase();
+  if (fullText.includes('スーパー') || fullText.includes('食品') || fullText.includes('イオン') || fullText.includes('コストコ')) {
+    category = '食費';
+  } else if (fullText.includes('交通') || fullText.includes('電車') || fullText.includes('バス') || fullText.includes('タクシー')) {
+    category = '交通費';
+  } else if (fullText.includes('ドラッグ') || fullText.includes('薬局')) {
+    category = '日用品';
+  }
+
+  return { amount, store, category };
+}
+
 // ユーザーメッセージを分析して自動記録
 function analyzeAndRecord(text) {
   const lowerText = text.toLowerCase();
@@ -2149,6 +2362,90 @@ function analyzeAndRecord(text) {
       addSystemMessage(`📝 Duolingo計画を記録しました。応援しています！`);
     }
   }
+
+  // TOEIC学習記録の検出
+  if (lowerText.includes('toeic') || lowerText.includes('トーイック') || lowerText.includes('トイック')) {
+    const dateStr = parseRelativeDate(text);
+    let category = 'general';
+    let detail = 'TOEIC学習';
+
+    // 教材検出
+    if (lowerText.includes('公式問題集') || lowerText.includes('公式')) {
+      detail = '公式問題集';
+      if (lowerText.includes('模試') || lowerText.includes('本番') || lowerText.includes('2時間')) {
+        category = 'mock_test';
+      } else {
+        category = 'reading';
+      }
+    } else if (lowerText.includes('金フレ') || lowerText.includes('金のフレーズ') || lowerText.includes('単語')) {
+      detail = '金フレ';
+      category = 'vocab';
+    } else if (lowerText.includes('でる1000') || lowerText.includes('でる千') || lowerText.includes('文法')) {
+      detail = 'でる1000';
+      category = 'vocab';
+    } else if (lowerText.includes('シャドーイング') || lowerText.includes('シャドウイング')) {
+      detail = 'シャドーイング';
+      category = 'listening';
+    } else if (lowerText.includes('ディクテーション')) {
+      detail = 'ディクテーション';
+      category = 'listening';
+    } else if (lowerText.includes('part 1') || lowerText.includes('part1') || lowerText.includes('パート1')) {
+      detail = 'Part 1';
+      category = 'listening';
+    } else if (lowerText.includes('part 2') || lowerText.includes('part2') || lowerText.includes('パート2')) {
+      detail = 'Part 2';
+      category = 'listening';
+    } else if (lowerText.includes('part 3') || lowerText.includes('part3') || lowerText.includes('パート3')) {
+      detail = 'Part 3';
+      category = 'listening';
+    } else if (lowerText.includes('part 4') || lowerText.includes('part4') || lowerText.includes('パート4')) {
+      detail = 'Part 4';
+      category = 'listening';
+    } else if (lowerText.includes('part 5') || lowerText.includes('part5') || lowerText.includes('パート5')) {
+      detail = 'Part 5';
+      category = 'reading';
+    } else if (lowerText.includes('part 6') || lowerText.includes('part6') || lowerText.includes('パート6')) {
+      detail = 'Part 6';
+      category = 'reading';
+    } else if (lowerText.includes('part 7') || lowerText.includes('part7') || lowerText.includes('パート7')) {
+      detail = 'Part 7';
+      category = 'reading';
+    } else if (lowerText.includes('リスニング')) {
+      detail = 'リスニング練習';
+      category = 'listening';
+    } else if (lowerText.includes('リーディング') || lowerText.includes('長文')) {
+      detail = 'リーディング練習';
+      category = 'reading';
+    }
+
+    // 実績判定
+    if (lowerText.includes('やりました') || lowerText.includes('やった') || lowerText.includes('終わった') ||
+        lowerText.includes('完了') || lowerText.includes('できた') || lowerText.includes('しました') ||
+        lowerText.includes('解いた') || lowerText.includes('勉強した')) {
+      const stats = addToeicStudyRecord(dateStr, category, detail, text);
+      const encouragement = stats.todayStudied ? '今日も頑張りましたね！' : '素晴らしいスタートです！';
+      addSystemMessage(`📚 TOEIC学習記録を追加しました (${detail})。${encouragement}`);
+    }
+  }
+
+  // 家計簿記録の検出（OCR連携）
+  if (lowerText.includes('レシート') || lowerText.includes('家計簿') ||
+      lowerText.includes('記録して') || lowerText.includes('支出')) {
+    const dateStr = parseRelativeDate(text);
+
+    // レシートテキストの解析
+    const parsed = parseReceiptText(text);
+
+    if (parsed.amount && parsed.amount > 0) {
+      // 金額が抽出できた場合のみ記録
+      const stats = addExpenseRecord(dateStr, parsed.amount, parsed.category, parsed.store, text);
+      const categoryMsg = parsed.category !== 'その他' ? ` (${parsed.category})` : '';
+      addSystemMessage(`💰 家計簿記録を追加しました: ¥${parsed.amount.toLocaleString()}${categoryMsg}。今月合計 ¥${stats.monthTotal.toLocaleString()}`);
+    } else if (lowerText.includes('記録して') || lowerText.includes('家計簿')) {
+      // 金額が抽出できなかった場合は手動入力を促す
+      addSystemMessage(`💡 金額を認識できませんでした。「¥1,280」または「1280円」の形式で金額を含めてください。`);
+    }
+  }
 }
 
 // --- Dynamic Dashboard System ---
@@ -2176,6 +2473,51 @@ function updateDashboard() {
       } else {
         const timeInfo = stats.lastRecordTime ? ` (最新: ${stats.lastRecordTime})` : '';
         comment = `今年${stats.yearCount}回、今月${stats.monthCount}回です${timeInfo}。健康管理を意識しましょう。`;
+      }
+    }
+    // TOEIC関連のキーワード検出
+    else if (text.includes('toeic') || text.includes('トーイック') || text.includes('トイック') ||
+             text.includes('公式問題集') || text.includes('金フレ') || text.includes('でる1000')) {
+      const stats = getToeicStats();
+      greeting = '📚 TOEIC 600点チャレンジ';
+      if (stats.totalStudyDays === 0) {
+        comment = '記録がまだありません。「今日金フレやりました」と話しかけると記録されます。4月の試験まで一緒に頑張りましょう！';
+      } else {
+        const daysMsg = stats.daysUntilTest > 0 ? `試験まであと${stats.daysUntilTest}日` : '試験まであと少し';
+        const todayMsg = stats.todayStudied ? '今日も学習済み！' : '今日も頑張りましょう！';
+        const weekMsg = `Week ${stats.currentWeek}/4 進行中`;
+        const timeInfo = stats.lastRecordTime ? ` (最新: ${stats.lastRecordTime})` : '';
+
+        // Week別進捗バー (簡易版)
+        let progressBar = '\n';
+        for (let i = 0; i < 4; i++) {
+          const percent = Math.round(stats.weekProgress[i]);
+          const bar = '█'.repeat(Math.floor(percent / 10)) + '░'.repeat(10 - Math.floor(percent / 10));
+          progressBar += `Week ${i + 1}: ${bar} ${percent}%\n`;
+        }
+
+        comment = `${daysMsg}！ ${todayMsg} 学習実績: ${stats.totalStudyDays}日${timeInfo}\n${weekMsg}${progressBar}`;
+      }
+    }
+    // 家計簿関連のキーワード検出
+    else if (text.includes('家計簿') || text.includes('レシート') || text.includes('支出') || text.includes('出費')) {
+      const stats = getExpenseStats();
+      greeting = '💰 家計簿';
+      if (stats.recordCount === 0) {
+        comment = '記録がまだありません。iPhoneのLive TextでレシートをOCRし、「このレシートを家計簿として記録して」と話しかけると自動記録されます。';
+      } else {
+        const timeInfo = stats.lastRecordTime ? ` (最新: ${stats.lastRecordTime})` : '';
+        const todayMsg = stats.todayTotal > 0 ? `今日 ¥${stats.todayTotal.toLocaleString()}、` : '';
+        comment = `${todayMsg}今月合計 ¥${stats.monthTotal.toLocaleString()} (${stats.monthRecordCount}件)${timeInfo}\n`;
+
+        // カテゴリ別内訳
+        if (Object.keys(stats.categoryBreakdown).length > 0) {
+          const breakdown = Object.entries(stats.categoryBreakdown)
+            .sort((a, b) => b[1] - a[1])
+            .map(([cat, amt]) => `${cat}: ¥${amt.toLocaleString()}`)
+            .join(', ');
+          comment += `内訳: ${breakdown}`;
+        }
       }
     }
     // Duolingo関連のキーワード検出
