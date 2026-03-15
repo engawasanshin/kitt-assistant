@@ -2392,6 +2392,81 @@ function parseReceiptText(text) {
 }
 
 // ============================================
+// Phase 2.5: 手動入力パターンと現在地GPS取得
+// ============================================
+
+// 現在地のGPS位置情報を取得
+async function getCurrentLocation() {
+  return new Promise((resolve) => {
+    if (!navigator.geolocation) {
+      resolve(null);
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        resolve({
+          name: '現在地',
+          address: '',  // 住所は逆ジオコーディングが必要（Phase 3で対応）
+          lat: position.coords.latitude,
+          lng: position.coords.longitude
+        });
+      },
+      (error) => {
+        console.log('GPS取得エラー:', error);
+        resolve(null);
+      },
+      {
+        enableHighAccuracy: false,  // 高精度不要（バッテリー節約）
+        timeout: 5000,
+        maximumAge: 300000  // 5分以内のキャッシュOK
+      }
+    );
+  });
+}
+
+// 手動入力の解析（簡易フォーマット）
+// 例: "1280円 食費", "¥1,280 スーパー", "500円 交通費 セブンイレブン"
+function parseManualInput(text) {
+  let amount = null;
+  let category = 'その他';
+  let company = '';
+
+  // 金額抽出
+  const yenMatch = text.match(/¥\s*([0-9,]+)/);
+  const circleMatch = text.match(/([0-9,]+)\s*円/);
+
+  if (yenMatch) {
+    amount = parseInt(yenMatch[1].replace(/,/g, ''));
+  } else if (circleMatch) {
+    amount = parseInt(circleMatch[1].replace(/,/g, ''));
+  }
+
+  if (!amount) return null;  // 金額がない場合は手動入力ではない
+
+  // カテゴリ検出
+  if (text.includes('食費') || text.includes('食事') || text.includes('ランチ') || text.includes('ディナー')) {
+    category = '食費';
+  } else if (text.includes('交通費') || text.includes('電車') || text.includes('バス') || text.includes('タクシー')) {
+    category = '交通費';
+  } else if (text.includes('日用品') || text.includes('雑貨')) {
+    category = '日用品';
+  }
+
+  // 会社名抽出（金額・カテゴリ以外の単語）
+  const words = text.split(/\s+/).filter(w =>
+    !w.match(/[0-9,¥円]+/) &&
+    !['食費', '交通費', '日用品', '食事', 'ランチ', 'ディナー', '電車', 'バス', 'タクシー', '雑貨'].includes(w)
+  );
+
+  if (words.length > 0) {
+    company = words.join(' ');
+  }
+
+  return { amount, category, company };
+}
+
+// ============================================
 // Phase 2: 位置情報取得機能
 // ============================================
 
@@ -2611,6 +2686,38 @@ function analyzeAndRecord(text) {
       const stats = addToeicStudyRecord(dateStr, category, detail, text);
       const encouragement = stats.todayStudied ? '今日も頑張りましたね！' : '素晴らしいスタートです！';
       addSystemMessage(`📚 TOEIC学習記録を追加しました (${detail})。${encouragement}`);
+    }
+  }
+
+  // Phase 2.5: 手動入力パターンの検出（簡易入力）
+  // 短いテキスト（100文字以下）で金額を含む場合は手動入力と判定
+  if (text.length < 100 && !lowerText.includes('レシート') && !lowerText.includes('スクショ')) {
+    const manualParsed = parseManualInput(text);
+    if (manualParsed && manualParsed.amount > 0) {
+      const dateStr = parseRelativeDate(text);
+
+      // GPS位置情報を取得（非同期）
+      setTimeout(async () => {
+        const location = await getCurrentLocation();
+        const records = JSON.parse(localStorage.getItem('kitt_expense_records') || '[]');
+
+        // 最後に追加されたレコードを更新（手動入力の場合）
+        if (records.length > 0) {
+          const lastRecord = records[records.length - 1];
+          if (lastRecord.source === 'manual' && location) {
+            lastRecord.location = location;
+            localStorage.setItem('kitt_expense_records', JSON.stringify(records));
+            addSystemMessage(`📍 現在地のGPS情報を追加しました`);
+          }
+        }
+      }, 100);
+
+      // まず記録を追加（GPS取得は非同期で後から）
+      const stats = addExpenseRecord(dateStr, manualParsed.amount, manualParsed.category, manualParsed.company, text, 'manual');
+      const categoryMsg = manualParsed.category !== 'その他' ? ` (${manualParsed.category})` : '';
+      const companyMsg = manualParsed.company ? ` - ${manualParsed.company}` : '';
+      addSystemMessage(`💰 家計簿記録を追加しました: ¥${manualParsed.amount.toLocaleString()}${categoryMsg}${companyMsg}。今月合計 ¥${stats.monthTotal.toLocaleString()}`);
+      return;  // 手動入力として処理完了
     }
   }
 
