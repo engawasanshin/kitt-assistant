@@ -2320,13 +2320,19 @@ function getExpenseStats() {
     }
   }
 
+  // Phase 2: 位置情報が設定されているレコード数をカウント
+  const locationCount = records.filter(r =>
+    r.location && r.location.lat && r.location.lng
+  ).length;
+
   return {
     monthTotal,
     todayTotal,
     categoryBreakdown,
     recordCount: records.length,
     lastRecordTime,
-    monthRecordCount: monthRecords.length
+    monthRecordCount: monthRecords.length,
+    locationCount  // Phase 2追加
   };
 }
 
@@ -2383,6 +2389,132 @@ function parseReceiptText(text) {
   }
 
   return { amount, company, category };
+}
+
+// ============================================
+// Phase 2: 位置情報取得機能
+// ============================================
+
+// 会社名から位置情報を取得（Gemini API使用）
+async function getLocationFromCompanyName(companyName) {
+  if (!companyName || !apiKey) {
+    return null;
+  }
+
+  try {
+    const prompt = `以下の会社名・店舗名から位置情報を取得してください。
+
+会社名: ${companyName}
+
+以下のJSON形式で返してください：
+{
+  "name": "正式な店舗名・会社名",
+  "address": "住所（都道府県から、市区町村まで）",
+  "lat": 緯度（数値、例: 35.6895）,
+  "lng": 経度（数値、例: 139.6917）,
+  "confidence": "high/medium/low"
+}
+
+注意事項：
+- 住所は「〇〇県〇〇市」レベルまででOK（番地は不要）
+- 緯度経度は概算でOK（その市区町村の中心付近）
+- チェーン店の場合は本店または代表的な店舗の位置
+- 会社名が曖昧で特定できない場合は confidence="low" とする`;
+
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+
+    const body = {
+      contents: [{
+        role: 'user',
+        parts: [{ text: prompt }]
+      }],
+      generationConfig: {
+        temperature: 0.3,  // 精度重視
+        maxOutputTokens: 512,
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: 'object',
+          properties: {
+            name: { type: 'string' },
+            address: { type: 'string' },
+            lat: { type: 'number' },
+            lng: { type: 'number' },
+            confidence: { type: 'string', enum: ['high', 'medium', 'low'] }
+          },
+          required: ['name', 'address', 'lat', 'lng', 'confidence']
+        }
+      }
+    };
+
+    const res = await fetchWithRetry(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': apiKey
+      },
+      body: JSON.stringify(body)
+    });
+
+    const data = res._parsedData || await res.json();
+    const textContent = data.candidates?.[0]?.content?.parts?.[0]?.text;
+
+    if (!textContent) return null;
+
+    const locationData = JSON.parse(textContent);
+    return locationData;
+  } catch (err) {
+    console.error('位置情報取得エラー:', err);
+    return null;
+  }
+}
+
+// 位置情報が未設定の家計簿記録に対して位置情報を取得
+async function updateExpenseLocations(limit = 10) {
+  const records = JSON.parse(localStorage.getItem('kitt_expense_records') || '[]');
+
+  // 位置情報が未設定のレコードを抽出
+  const needsLocation = records.filter(r =>
+    r.company && (!r.location || !r.location.lat || !r.location.lng)
+  );
+
+  if (needsLocation.length === 0) {
+    addSystemMessage('📍 すべての記録に位置情報が設定済みです。');
+    return 0;
+  }
+
+  const toProcess = needsLocation.slice(0, limit);
+  addSystemMessage(`📍 ${toProcess.length}件の記録に位置情報を追加中...`);
+
+  let successCount = 0;
+  for (let i = 0; i < toProcess.length; i++) {
+    const record = toProcess[i];
+    const location = await getLocationFromCompanyName(record.company);
+
+    if (location) {
+      // 元のレコードを更新
+      const idx = records.findIndex(r => r.timestamp === record.timestamp);
+      if (idx !== -1) {
+        records[idx].location = {
+          name: location.name,
+          address: location.address,
+          lat: location.lat,
+          lng: location.lng
+        };
+        successCount++;
+      }
+    }
+
+    // 進捗表示
+    if ((i + 1) % 3 === 0 || i === toProcess.length - 1) {
+      addSystemMessage(`処理中... ${i + 1}/${toProcess.length}件`);
+    }
+  }
+
+  // 保存
+  localStorage.setItem('kitt_expense_records', JSON.stringify(records));
+
+  addSystemMessage(`✅ 位置情報を${successCount}件追加しました！`);
+  return successCount;
 }
 
 // ユーザーメッセージを分析して自動記録
@@ -2510,6 +2642,24 @@ function analyzeAndRecord(text) {
       addSystemMessage(`💡 金額を認識できませんでした。「¥1,280」または「1280円」の形式で金額を含めてください。`);
     }
   }
+
+  // Phase 2: 位置情報取得の検出
+  if (lowerText.includes('位置情報') || lowerText.includes('場所') ||
+      lowerText.includes('GPS') || lowerText.includes('地図')) {
+    if (lowerText.includes('取得') || lowerText.includes('追加') ||
+        lowerText.includes('更新') || lowerText.includes('設定')) {
+      // 非同期処理なので、即座に確認メッセージを表示
+      addSystemMessage('📍 位置情報取得を開始します...');
+      // 非同期で実行（UIをブロックしない）
+      setTimeout(async () => {
+        try {
+          await updateExpenseLocations(10);
+        } catch (err) {
+          addSystemMessage(`❌ エラー: ${err.message}`);
+        }
+      }, 100);
+    }
+  }
 }
 
 // --- Dynamic Dashboard System ---
@@ -2581,6 +2731,13 @@ function updateDashboard() {
             .map(([cat, amt]) => `${cat}: ¥${amt.toLocaleString()}`)
             .join(', ');
           comment += `内訳: ${breakdown}`;
+        }
+
+        // Phase 2: 位置情報統計
+        if (stats.locationCount !== undefined && stats.locationCount > 0) {
+          comment += `\n📍 位置情報: ${stats.locationCount}/${stats.recordCount}件設定済み`;
+        } else if (stats.locationCount === 0 && stats.recordCount > 0) {
+          comment += `\n💡 「位置情報を取得」と話しかけると、店舗の場所を自動追加できます`;
         }
       }
     }
