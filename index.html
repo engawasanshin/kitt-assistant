@@ -689,10 +689,108 @@ const DEFAULT_SYSTEM_PROMPT = `あなたはK.I.T.T.（Knight Industries Two Thou
 
 const GEMINI_MODEL = 'gemini-2.5-flash';  // 有料版（プライバシー保護、学習されない）
 
+// --- API Key Encryption (Web Cryptography API) ---
+async function deriveKey() {
+  // デバイス固有IDを生成/取得（初回のみ生成）
+  let deviceId = localStorage.getItem('kitt_device_id');
+  if (!deviceId) {
+    deviceId = crypto.randomUUID();
+    localStorage.setItem('kitt_device_id', deviceId);
+  }
+
+  // PBKDF2で鍵を導出
+  const enc = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    enc.encode(deviceId),
+    'PBKDF2',
+    false,
+    ['deriveKey']
+  );
+
+  return await crypto.subtle.deriveKey(
+    {
+      name: 'PBKDF2',
+      salt: enc.encode('KITT-API-KEY-SALT-2026'),
+      iterations: 100000,
+      hash: 'SHA-256'
+    },
+    keyMaterial,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt']
+  );
+}
+
+async function encryptApiKey(apiKey) {
+  if (!apiKey) return null;
+
+  const enc = new TextEncoder();
+  const key = await deriveKey();
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+
+  const encrypted = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    key,
+    enc.encode(apiKey)
+  );
+
+  // IV + 暗号化データを結合してBase64エンコード
+  const combined = new Uint8Array(iv.length + encrypted.byteLength);
+  combined.set(iv);
+  combined.set(new Uint8Array(encrypted), iv.length);
+
+  return btoa(String.fromCharCode(...combined));
+}
+
+async function decryptApiKey(encryptedData) {
+  if (!encryptedData) return '';
+
+  try {
+    // Base64デコード
+    const combined = Uint8Array.from(atob(encryptedData), c => c.charCodeAt(0));
+    const iv = combined.slice(0, 12);
+    const encrypted = combined.slice(12);
+
+    const key = await deriveKey();
+    const decrypted = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv },
+      key,
+      encrypted
+    );
+
+    const dec = new TextDecoder();
+    return dec.decode(decrypted);
+  } catch (e) {
+    console.error('API Key decryption failed:', e);
+    return '';
+  }
+}
+
 // --- State ---
-let apiKey = localStorage.getItem('kitt_api_key') || '';
+let apiKey = '';
 let systemPrompt = localStorage.getItem('kitt_system_prompt') || DEFAULT_SYSTEM_PROMPT;
 let chatHistory = JSON.parse(localStorage.getItem('kitt_history') || '[]');
+
+// APIキーを非同期で読み込み
+(async function initApiKey() {
+  const encryptedKey = localStorage.getItem('kitt_api_key_encrypted');
+  if (encryptedKey) {
+    apiKey = await decryptApiKey(encryptedKey);
+  } else {
+    // 旧形式（平文）からの移行
+    const oldKey = localStorage.getItem('kitt_api_key');
+    if (oldKey) {
+      apiKey = oldKey;
+      // 暗号化して保存し直す
+      const encrypted = await encryptApiKey(oldKey);
+      if (encrypted) {
+        localStorage.setItem('kitt_api_key_encrypted', encrypted);
+        localStorage.removeItem('kitt_api_key'); // 旧データを削除
+      }
+    }
+  }
+})();
 
 // --- API Usage Counter ---
 function getToday() { return new Date().toISOString().slice(0, 10); }
@@ -1297,13 +1395,18 @@ function closeSettings() {
   document.getElementById('settingsModal').classList.remove('active');
 }
 
-function saveSettings() {
+async function saveSettings() {
   const key = document.getElementById('apiKeyInput').value.trim();
   const prompt = document.getElementById('systemPromptInput').value.trim();
 
   if (key) {
     apiKey = key;
-    localStorage.setItem('kitt_api_key', key);
+    // APIキーを暗号化して保存
+    const encrypted = await encryptApiKey(key);
+    if (encrypted) {
+      localStorage.setItem('kitt_api_key_encrypted', encrypted);
+      localStorage.removeItem('kitt_api_key'); // 旧データを削除（念のため）
+    }
   }
 
   if (prompt) {
@@ -2067,6 +2170,227 @@ function getDrinkingStats() {
   return { yearCount, monthCount, totalCount: records.length, lastRecordTime };
 }
 
+// ============================================
+// 飲み会モード（自動位置記録・GPS連携）
+// ============================================
+
+// ユーザー位置（会社・家）を取得・設定
+function getUserLocations() {
+  const data = localStorage.getItem('kitt_user_locations');
+  if (data) {
+    try {
+      return JSON.parse(data);
+    } catch (e) {
+      return { home: null, office: null };
+    }
+  }
+  return { home: null, office: null };
+}
+
+function setUserLocation(type, location) {
+  // type: 'home' or 'office'
+  // location: { lat, lng, timestamp, address }
+  const locations = getUserLocations();
+  locations[type] = {
+    lat: location.lat,
+    lng: location.lng,
+    timestamp: new Date().toISOString(),
+    address: location.address || ''
+  };
+  localStorage.setItem('kitt_user_locations', JSON.stringify(locations));
+  return locations;
+}
+
+// 位置履歴を記録（自動バックグラウンド記録用）
+function addActivityHistory(location, eventType = 'auto') {
+  // eventType: 'auto', 'manual', 'drinking_start', 'drinking_end'
+  const history = JSON.parse(localStorage.getItem('kitt_activity_history') || '[]');
+  const record = {
+    lat: location.lat,
+    lng: location.lng,
+    timestamp: new Date().toISOString(),
+    eventType: eventType,
+    address: location.address || ''
+  };
+  history.push(record);
+
+  // 最大1000件まで保持（古いものから削除）
+  if (history.length > 1000) {
+    history.splice(0, history.length - 1000);
+  }
+
+  localStorage.setItem('kitt_activity_history', JSON.stringify(history));
+  return record;
+}
+
+// 飲み会専用の経費記録
+function addDrinkingExpense(expense) {
+  // expense: { amount, storeName, timestamp, location, category }
+  const expenses = JSON.parse(localStorage.getItem('kitt_drinking_expenses') || '[]');
+  const record = {
+    amount: expense.amount,
+    storeName: expense.storeName || '',
+    timestamp: expense.timestamp || new Date().toISOString(),
+    location: expense.location || null,
+    category: expense.category || '飲み会',
+    confirmed: expense.confirmed || false
+  };
+  expenses.push(record);
+  localStorage.setItem('kitt_drinking_expenses', JSON.stringify(expenses));
+  return record;
+}
+
+// 2点間の距離を計算（メートル単位）
+function calculateDistance(lat1, lng1, lat2, lng2) {
+  const R = 6371000; // 地球の半径（メートル）
+  const φ1 = lat1 * Math.PI / 180;
+  const φ2 = lat2 * Math.PI / 180;
+  const Δφ = (lat2 - lat1) * Math.PI / 180;
+  const Δλ = (lng2 - lng1) * Math.PI / 180;
+
+  const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+            Math.cos(φ1) * Math.cos(φ2) *
+            Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+  return R * c;
+}
+
+// 現在地が会社・家の範囲内かチェック（半径100m以内）
+function isNearKnownLocation(currentLat, currentLng) {
+  const locations = getUserLocations();
+  const threshold = 100; // 100メートル
+
+  if (locations.home) {
+    const distanceToHome = calculateDistance(currentLat, currentLng, locations.home.lat, locations.home.lng);
+    if (distanceToHome < threshold) {
+      return { type: 'home', distance: distanceToHome };
+    }
+  }
+
+  if (locations.office) {
+    const distanceToOffice = calculateDistance(currentLat, currentLng, locations.office.lat, locations.office.lng);
+    if (distanceToOffice < threshold) {
+      return { type: 'office', distance: distanceToOffice };
+    }
+  }
+
+  return null;
+}
+
+// 飲み会候補の検出（平日夜、会社・家以外、30分以上滞在）
+async function checkDrinkingCandidate() {
+  const now = new Date();
+  const hour = now.getHours();
+  const dayOfWeek = now.getDay(); // 0=日曜、6=土曜
+
+  // 平日（月〜金）の19時以降のみチェック
+  if (dayOfWeek === 0 || dayOfWeek === 6 || hour < 19) {
+    return null;
+  }
+
+  // 現在地取得
+  const currentLocation = await getCurrentLocation();
+  if (!currentLocation) {
+    return null;
+  }
+
+  // 会社・家の近くかチェック
+  const nearKnown = isNearKnownLocation(currentLocation.lat, currentLocation.lng);
+  if (nearKnown) {
+    return null; // 会社・家の近くなら飲み会ではない
+  }
+
+  // 位置履歴から滞在時間を計算（同じ場所に30分以上いるか）
+  const history = JSON.parse(localStorage.getItem('kitt_activity_history') || '[]');
+  const recentHistory = history.filter(h => {
+    const timestamp = new Date(h.timestamp);
+    const diff = now - timestamp;
+    return diff < 60 * 60 * 1000; // 過去1時間以内
+  });
+
+  if (recentHistory.length > 0) {
+    // 最も古い記録との距離を確認
+    const oldest = recentHistory[0];
+    const distance = calculateDistance(currentLocation.lat, currentLocation.lng, oldest.lat, oldest.lng);
+
+    if (distance < 100) { // 同じ場所（100m以内）
+      const stayDuration = now - new Date(oldest.timestamp);
+      if (stayDuration > 30 * 60 * 1000) { // 30分以上
+        return {
+          location: currentLocation,
+          stayDuration: Math.floor(stayDuration / 60000), // 分単位
+          detectedAt: now.toISOString()
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
+// 未確認の飲み会候補を取得
+function getPendingDrinkingConfirmations() {
+  const pending = JSON.parse(localStorage.getItem('kitt_pending_confirmations') || '[]');
+  return pending;
+}
+
+// 飲み会候補を保存（後で確認用）
+function addPendingConfirmation(candidate) {
+  const pending = JSON.parse(localStorage.getItem('kitt_pending_confirmations') || '[]');
+  pending.push({
+    ...candidate,
+    id: Date.now(),
+    status: 'pending'
+  });
+  localStorage.setItem('kitt_pending_confirmations', JSON.stringify(pending));
+}
+
+// 飲み会候補を確認済みにする
+function confirmDrinkingCandidate(id, confirmed, storeName = '', amount = 0) {
+  const pending = JSON.parse(localStorage.getItem('kitt_pending_confirmations') || '[]');
+  const index = pending.findIndex(p => p.id === id);
+
+  if (index !== -1) {
+    pending[index].status = confirmed ? 'confirmed' : 'rejected';
+    pending[index].confirmedAt = new Date().toISOString();
+
+    if (confirmed) {
+      // 飲み会記録に追加
+      const dateStr = formatDate(new Date(pending[index].detectedAt));
+      addDrinkingRecord(dateStr, `自動検出: ${storeName || '不明'}`);
+
+      // 経費記録に追加（金額がある場合）
+      if (amount > 0) {
+        addDrinkingExpense({
+          amount: amount,
+          storeName: storeName,
+          timestamp: pending[index].detectedAt,
+          location: pending[index].location,
+          confirmed: true
+        });
+      }
+    }
+
+    localStorage.setItem('kitt_pending_confirmations', JSON.stringify(pending));
+  }
+}
+
+// アプリ起動時に未確認の飲み会候補をチェック
+function checkPendingConfirmations() {
+  const pending = getPendingDrinkingConfirmations();
+  const pendingOnly = pending.filter(p => p.status === 'pending');
+
+  if (pendingOnly.length > 0) {
+    const count = pendingOnly.length;
+    const latest = pendingOnly[pendingOnly.length - 1];
+    const date = new Date(latest.detectedAt);
+    const dateStr = `${date.getMonth() + 1}/${date.getDate()} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+
+    addSystemMessage(`🍻 未確認の飲み会候補が${count}件あります（最新: ${dateStr}）。「飲み会確認」と話しかけて確認してください。`);
+  }
+}
+
 // Duolingo記録
 function addDuolingoRecord(dateStr, type, note = '') {
   const records = JSON.parse(localStorage.getItem('kitt_duolingo_records') || '[]');
@@ -2596,10 +2920,134 @@ async function updateExpenseLocations(limit = 10) {
 function analyzeAndRecord(text) {
   const lowerText = text.toLowerCase();
 
+  // 位置登録コマンド（会社・家の設定）
+  if (lowerText.includes('ここが会社') || lowerText.includes('ここがオフィス') || lowerText.includes('ここが職場')) {
+    (async () => {
+      const location = await getCurrentLocation();
+      if (location) {
+        setUserLocation('office', location);
+        addSystemMessage('🏢 会社の位置を登録しました。飲み会モードで使用します。');
+      } else {
+        addSystemMessage('⚠️ GPS取得に失敗しました。位置情報の許可を確認してください。');
+      }
+    })();
+  } else if (lowerText.includes('ここが家') || lowerText.includes('ここが自宅')) {
+    (async () => {
+      const location = await getCurrentLocation();
+      if (location) {
+        setUserLocation('home', location);
+        addSystemMessage('🏠 家の位置を登録しました。飲み会モードで使用します。');
+      } else {
+        addSystemMessage('⚠️ GPS取得に失敗しました。位置情報の許可を確認してください。');
+      }
+    })();
+  }
+
+  // 飲み会確認コマンド（未確認の候補を表示）
+  if (lowerText.includes('飲み会確認') || lowerText.includes('飲み会チェック')) {
+    const pending = getPendingDrinkingConfirmations();
+    const pendingOnly = pending.filter(p => p.status === 'pending');
+
+    if (pendingOnly.length === 0) {
+      addSystemMessage('未確認の飲み会候補はありません。');
+    } else {
+      let msg = `🍻 未確認の飲み会候補が${pendingOnly.length}件あります:\n\n`;
+      pendingOnly.forEach((p, i) => {
+        const date = new Date(p.detectedAt);
+        const dateStr = `${date.getMonth() + 1}/${date.getDate()} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+        const duration = p.stayDuration ? `${p.stayDuration}分滞在` : '';
+        msg += `${i + 1}. ${dateStr} - ${duration}\n`;
+      });
+      msg += '\n確認する場合は「1番目を確認」のように話しかけてください。';
+      addSystemMessage(msg);
+    }
+  }
+
+  // 飲み会候補の個別確認（「1番目を確認」など）
+  const confirmMatch = text.match(/(\d+)番目?\s*(を|の)?\s*確認/);
+  if (confirmMatch) {
+    const index = parseInt(confirmMatch[1]) - 1;
+    const pending = getPendingDrinkingConfirmations();
+    const pendingOnly = pending.filter(p => p.status === 'pending');
+
+    if (index >= 0 && index < pendingOnly.length) {
+      const candidate = pendingOnly[index];
+      const date = new Date(candidate.detectedAt);
+      const dateStr = `${date.getMonth() + 1}/${date.getDate()} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+
+      addSystemMessage(`📍 ${dateStr}の候補:\n滞在時間: ${candidate.stayDuration}分\n\nこれは飲み会でしたか？「はい、店名は〇〇」または「いいえ」と答えてください。`);
+    } else {
+      addSystemMessage(`⚠️ ${confirmMatch[1]}番目の候補が見つかりませんでした。`);
+    }
+  }
+
+  // 飲み会履歴の参照（「昨日の飲み会」「今週の飲み会」など）
+  if ((lowerText.includes('飲み会') || lowerText.includes('飲み')) &&
+      (lowerText.includes('履歴') || lowerText.includes('記録') || lowerText.includes('見せて') ||
+       lowerText.includes('教えて') || lowerText.includes('今週') || lowerText.includes('今月') ||
+       lowerText.includes('昨日') || lowerText.includes('先週'))) {
+    const records = JSON.parse(localStorage.getItem('kitt_drinking_records') || '[]');
+    const expenses = JSON.parse(localStorage.getItem('kitt_drinking_expenses') || '[]');
+
+    if (records.length === 0) {
+      addSystemMessage('飲み会の記録がまだありません。');
+    } else {
+      // 期間フィルタリング
+      let filtered = records;
+      const now = new Date();
+
+      if (lowerText.includes('昨日')) {
+        const yesterday = new Date(now);
+        yesterday.setDate(yesterday.getDate() - 1);
+        const dateStr = formatDate(yesterday);
+        filtered = records.filter(r => r.date === dateStr);
+      } else if (lowerText.includes('今週')) {
+        const weekAgo = new Date(now);
+        weekAgo.setDate(weekAgo.getDate() - 7);
+        filtered = records.filter(r => new Date(r.date) >= weekAgo);
+      } else if (lowerText.includes('今月')) {
+        const thisMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+        filtered = records.filter(r => r.date.startsWith(thisMonth));
+      }
+
+      // 最新5件を表示
+      const recent = filtered.slice(-5).reverse();
+      let msg = `🍻 飲み会記録 (${filtered.length}件):\n\n`;
+      recent.forEach(r => {
+        const expense = expenses.find(e => e.timestamp.startsWith(r.date));
+        const amount = expense ? `¥${expense.amount.toLocaleString()}` : '';
+        msg += `📅 ${r.date} ${amount}\n${r.note}\n\n`;
+      });
+
+      addSystemMessage(msg);
+    }
+  }
+
+  // 飲み会モードのステータス確認
+  if (lowerText.includes('飲み会モード') && (lowerText.includes('状態') || lowerText.includes('ステータス') || lowerText.includes('設定'))) {
+    const locations = getUserLocations();
+    const history = JSON.parse(localStorage.getItem('kitt_activity_history') || '[]');
+    const pending = getPendingDrinkingConfirmations().filter(p => p.status === 'pending');
+
+    let msg = '🍻 飲み会モード ステータス:\n\n';
+    msg += `🏢 会社: ${locations.office ? '登録済み' : '未登録'}\n`;
+    msg += `🏠 家: ${locations.home ? '登録済み' : '未登録'}\n`;
+    msg += `📍 位置履歴: ${history.length}件\n`;
+    msg += `⏳ 未確認候補: ${pending.length}件\n\n`;
+
+    if (!locations.office || !locations.home) {
+      msg += '※ 「ここが会社だよ」「ここが家だよ」と話しかけて位置を登録してください。';
+    }
+
+    addSystemMessage(msg);
+  }
+
   // 飲み会記録の検出（実績のみ）
   if ((lowerText.includes('飲み会') || lowerText.includes('飲み') || lowerText.includes('お酒')) &&
       (lowerText.includes('です') || lowerText.includes('でした') || lowerText.includes('行った') ||
-       lowerText.includes('行く') || lowerText.includes('行きます') || lowerText.includes('参加'))) {
+       lowerText.includes('行く') || lowerText.includes('行きます') || lowerText.includes('参加')) &&
+      !lowerText.includes('履歴') && !lowerText.includes('記録') && !lowerText.includes('見せて') &&
+      !lowerText.includes('教えて') && !lowerText.includes('モード') && !lowerText.includes('確認')) {
     const dateStr = parseRelativeDate(text);
     const stats = addDrinkingRecord(dateStr, text);
     addSystemMessage(`📊 飲み会記録を追加しました（今年${stats.yearCount}回目、今月${stats.monthCount}回目）`);
@@ -2788,12 +3236,34 @@ function updateDashboard() {
     // 飲み会関連のキーワード検出
     if (text.includes('飲み会') || text.includes('飲み') || text.includes('お酒')) {
       const stats = getDrinkingStats();
+      const locations = getUserLocations();
+      const pending = getPendingDrinkingConfirmations().filter(p => p.status === 'pending');
+
       greeting = '📊 飲み会記録';
       if (stats.totalCount === 0) {
         comment = '記録がまだありません。「今日飲み会です」と話しかけると記録されます。';
       } else {
         const timeInfo = stats.lastRecordTime ? ` (最新: ${stats.lastRecordTime})` : '';
         comment = `今年${stats.yearCount}回、今月${stats.monthCount}回です${timeInfo}。健康管理を意識しましょう。`;
+      }
+
+      // 飲み会モードの状態を追加
+      const modeStatus = [];
+      if (locations.office && locations.home) {
+        modeStatus.push('🍻 モード: 有効');
+      } else {
+        const missing = [];
+        if (!locations.office) missing.push('会社');
+        if (!locations.home) missing.push('家');
+        modeStatus.push(`⚙️ モード: ${missing.join('・')}未登録`);
+      }
+
+      if (pending.length > 0) {
+        modeStatus.push(`⏳ 未確認: ${pending.length}件`);
+      }
+
+      if (modeStatus.length > 0) {
+        comment += `\n${modeStatus.join(' / ')}`;
       }
     }
     // TOEIC関連のキーワード検出
@@ -2952,6 +3422,23 @@ document.addEventListener('DOMContentLoaded', () => {
   setInterval(updateDashboard, 60000);
   // 1秒ごとに時計更新
   setInterval(updateClock, 1000);
+
+  // 飲み会モード: 未確認の候補をチェック
+  checkPendingConfirmations();
+
+  // 飲み会モード: 30分ごとに位置情報を記録（バックグラウンド）
+  setInterval(async () => {
+    const location = await getCurrentLocation();
+    if (location) {
+      addActivityHistory(location, 'auto');
+      // 飲み会候補を検出
+      const candidate = await checkDrinkingCandidate();
+      if (candidate) {
+        addPendingConfirmation(candidate);
+        addSystemMessage('🍻 飲み会を検出しました。後で確認してください。');
+      }
+    }
+  }, 30 * 60 * 1000); // 30分
 });
 
 // メッセージ送信時の更新は、sendMessage関数内で直接呼び出すように変更
