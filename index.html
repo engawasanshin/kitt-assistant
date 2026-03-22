@@ -1407,18 +1407,22 @@ async function loadAlphaVantageApiKey() {
  */
 async function fetchStockQuote(symbol) {
   const apiKey = await loadAlphaVantageApiKey();
+  console.log('[DEBUG] Alpha Vantage API Key length:', apiKey ? apiKey.length : 'null');
   if (!apiKey) {
     throw new Error('Alpha Vantage APIキーが設定されていません');
   }
 
   const url = `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${symbol}&apikey=${apiKey}`;
+  console.log('[DEBUG] Fetching:', url.replace(apiKey, 'REDACTED'));
 
   const res = await fetch(url);
+  console.log('[DEBUG] Response status:', res.status);
   if (!res.ok) {
     throw new Error(`Alpha Vantage API Error: ${res.status}`);
   }
 
   const data = await res.json();
+  console.log('[DEBUG] Response data:', data);
 
   if (data['Error Message']) {
     throw new Error(data['Error Message']);
