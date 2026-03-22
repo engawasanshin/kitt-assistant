@@ -3213,6 +3213,15 @@ function analyzeAndRecord(text) {
 
     setTimeout(async () => {
       try {
+        // デバッグ: APIキー確認
+        const alphaKey = await loadAlphaVantageApiKey();
+        const deviceId = localStorage.getItem('kitt_device_id');
+        addSystemMessage(`[DEBUG] デバイスID: ${deviceId ? deviceId.substring(0, 8) + '...' : '未設定'}`);
+        addSystemMessage(`[DEBUG] Alpha Vantage APIキー長: ${alphaKey ? alphaKey.length + '文字' : '未設定'}`);
+        if (alphaKey) {
+          addSystemMessage(`[DEBUG] APIキー先頭4文字: ${alphaKey.substring(0, 4)}****`);
+        }
+
         const result = await generateInvestmentCandidates(context);
         addSystemMessage(`✅ ${result.candidates.length}件の銘柄候補を生成しました！`);
 
