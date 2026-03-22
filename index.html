@@ -546,6 +546,16 @@ body {
     </div>
     <div id="candidatesList" style="font-size: 13px; color: #ccc; line-height: 1.6; max-height: 400px; overflow-y: auto; padding-right: 8px;"></div>
   </div>
+
+  <!-- ウォッチリスト表示エリア -->
+  <div id="watchlistArea" style="margin-top: 12px; display: none;">
+    <div style="display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: #ff8866; margin-bottom: 8px; border-bottom: 1px solid #2a2a2a; padding-bottom: 4px;">
+      <span>👀 ウォッチリスト</span>
+      <button onclick="handleUpdateWatchlist()" style="font-size: 10px; padding: 4px 8px; border: none; background: #ff2200; color: #fff; border-radius: 4px; cursor: pointer;">🔄 更新</button>
+    </div>
+    <div id="watchlistStats" style="font-size: 11px; color: #aaa; margin-bottom: 8px;"></div>
+    <div id="watchlistContent" style="font-size: 13px; color: #ccc; line-height: 1.6; max-height: 400px; overflow-y: auto; padding-right: 8px;"></div>
+  </div>
 </div>
 
 <div class="chat-area" id="chatArea">
@@ -1161,6 +1171,9 @@ window.addEventListener('load', async () => {
 
   // Periodic export prompt (check every 10 minutes)
   setInterval(checkExportPrompt, 10 * 60 * 1000);
+
+  // ウォッチリスト自動更新チェック（朝9時以降、1日1回）
+  checkAndAutoUpdateWatchlist();
 });
 
 // --- Chat Functions ---
@@ -1903,6 +1916,264 @@ function getWatchlistStats() {
     losers,
     totalGainLoss: totalGainLoss.toFixed(2),
     lastUpdated: timestamps[0] || null
+  };
+}
+
+// --- Phase 2 Day 4: ウォッチリスト専用UI表示 ---
+
+function displayWatchlist(watchlist) {
+  const container = document.getElementById('watchlistArea');
+  const statsEl = document.getElementById('watchlistStats');
+  const contentEl = document.getElementById('watchlistContent');
+
+  if (!container || !statsEl || !contentEl) return;
+
+  if (!watchlist || watchlist.length === 0) {
+    container.style.display = 'none';
+    return;
+  }
+
+  // 統計情報表示
+  const stats = getWatchlistStats();
+  const totalGainLossColor = parseFloat(stats.totalGainLoss) >= 0 ? '#88cc88' : '#cc8888';
+  const lastUpdateStr = stats.lastUpdated
+    ? new Date(stats.lastUpdated).toLocaleString('ja-JP', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+    : '未更新';
+
+  statsEl.innerHTML = `
+    📊 合計: <span style="font-weight: bold;">${stats.totalCount}</span>件 |
+    上昇: <span style="color: #88cc88;">${stats.gainers}</span> /
+    下落: <span style="color: #cc8888;">${stats.losers}</span> |
+    損益合計: <span style="color: ${totalGainLossColor}; font-weight: bold;">${stats.totalGainLoss > 0 ? '+' : ''}${stats.totalGainLoss}</span>円 |
+    最終更新: ${lastUpdateStr}
+  `;
+
+  // ウォッチリスト一覧表示
+  let html = '';
+  watchlist.forEach((item) => {
+    const changeColor = item.change >= 0 ? '#88cc88' : '#cc8888';
+    const changeSign = item.change >= 0 ? '+' : '';
+    const lastUpdateDate = new Date(item.lastUpdated).toLocaleString('ja-JP', {
+      month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
+    });
+
+    html += `
+      <div style="border: 1px solid #2a2a2a; border-radius: 6px; padding: 8px; margin-bottom: 6px; background: #1a1a1a;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+          <div>
+            <span style="font-weight: bold; color: #ff8866;">${item.name}</span>
+            <span style="font-size: 11px; color: #888; margin-left: 6px;">${item.ticker}</span>
+          </div>
+          <button onclick="handleRemoveFromWatchlist('${item.ticker}')" style="font-size: 10px; padding: 4px 8px; border: none; background: #333; color: #888; border-radius: 4px; cursor: pointer;">✕ 削除</button>
+        </div>
+        <div style="font-size: 11px; color: #aaa; margin-bottom: 4px;">
+          セクター: ${item.sector || '未設定'} | 登録日: ${item.addedDate}
+        </div>
+        <div style="font-size: 11px; color: #bbb; margin-bottom: 4px; font-style: italic;">
+          理由: ${item.addedReason}
+        </div>
+        <div style="display: flex; justify-content: space-between; font-size: 11px;">
+          <div>
+            現在価格: <span style="font-weight: bold; color: #fff;">¥${item.currentPrice.toFixed(2)}</span>
+          </div>
+          <div>
+            登録時: <span style="color: #aaa;">¥${item.addedPrice.toFixed(2)}</span>
+          </div>
+        </div>
+        <div style="display: flex; justify-content: space-between; font-size: 11px; margin-top: 4px;">
+          <div style="color: ${changeColor}; font-weight: bold;">
+            損益: ${changeSign}¥${item.change.toFixed(2)} (${changeSign}${item.changePercent}%)
+          </div>
+          <div style="color: #888;">
+            ${lastUpdateDate}更新
+          </div>
+        </div>
+        ${item.newsCount > 0 ? `<div style="font-size: 10px; color: #ff8866; margin-top: 4px;">📰 ニュース ${item.newsCount}件</div>` : ''}
+      </div>
+    `;
+  });
+
+  contentEl.innerHTML = html;
+  container.style.display = 'block';
+}
+
+async function handleUpdateWatchlist() {
+  try {
+    addSystemMessage('📊 ウォッチリストを更新中...');
+
+    const result = await updateWatchlist();
+    addSystemMessage(`✅ ${result.message}`);
+
+    // ダッシュボード再描画
+    setTimeout(updateDashboard, 500);
+  } catch (err) {
+    addSystemMessage(`❌ 更新エラー: ${err.message}`);
+  }
+}
+
+async function handleRemoveFromWatchlist(ticker) {
+  try {
+    const watchlist = getWatchlist();
+    const item = watchlist.find(w => w.ticker === ticker);
+
+    if (!item) {
+      throw new Error('銘柄が見つかりません');
+    }
+
+    if (confirm(`${item.name}をウォッチリストから削除しますか？`)) {
+      removeFromWatchlist(ticker);
+      addSystemMessage(`✅ ${item.name}をウォッチリストから削除しました`);
+
+      // ダッシュボード再描画
+      setTimeout(updateDashboard, 500);
+    }
+  } catch (err) {
+    addSystemMessage(`❌ ${err.message}`);
+  }
+}
+
+// --- Phase 2 Day 6: 自動更新機能 ---
+
+async function checkAndAutoUpdateWatchlist() {
+  const watchlist = getWatchlist();
+  if (watchlist.length === 0) {
+    return; // ウォッチリストが空なら何もしない
+  }
+
+  const now = new Date();
+  const today = now.toISOString().split('T')[0]; // YYYY-MM-DD
+  const lastAutoUpdate = localStorage.getItem('kitt_watchlist_last_auto_update');
+
+  // 今日まだ自動更新していない場合のみ更新
+  if (lastAutoUpdate !== today) {
+    const currentHour = now.getHours();
+
+    // 朝9時以降かつ未更新の場合に自動更新
+    if (currentHour >= 9) {
+      console.log('[Auto Update] ウォッチリストを自動更新します');
+
+      try {
+        const result = await updateWatchlist();
+        console.log('[Auto Update] 完了:', result.message);
+
+        // 最終自動更新日を記録
+        localStorage.setItem('kitt_watchlist_last_auto_update', today);
+
+        // ダッシュボード再描画
+        setTimeout(updateDashboard, 500);
+      } catch (err) {
+        console.error('[Auto Update] エラー:', err);
+      }
+    } else {
+      console.log('[Auto Update] 9時前のためスキップ');
+    }
+  } else {
+    console.log('[Auto Update] 今日は既に更新済み');
+  }
+}
+
+// --- Phase 2 Day 7: 購入タイミング分析（Gemini API） ---
+
+async function analyzeStockTiming(ticker) {
+  if (!apiKey) {
+    throw new Error('Gemini APIキーが設定されていません');
+  }
+
+  const watchlist = getWatchlist();
+  const stock = watchlist.find(item => item.ticker === ticker);
+
+  if (!stock) {
+    throw new Error('ウォッチリストに銘柄が見つかりません');
+  }
+
+  // ニュースセンチメント取得
+  let newsData = null;
+  try {
+    await new Promise(r => setTimeout(r, 1000)); // API制限対策
+    newsData = await fetchNewsSentiment(ticker);
+  } catch (err) {
+    console.warn('[Timing Analysis] ニュース取得失敗:', err);
+  }
+
+  // Gemini APIで購入タイミング分析
+  const prompt = `
+あなたは投資学習支援アシストです。以下の銘柄について、初心者向けに購入タイミングの判断材料を提供してください。
+
+【銘柄情報】
+- ティッカー: ${stock.ticker}
+- 名前: ${stock.name}
+- セクター: ${stock.sector}
+- 登録時価格: ¥${stock.addedPrice.toFixed(2)}
+- 現在価格: ¥${stock.currentPrice.toFixed(2)}
+- 損益: ${stock.change >= 0 ? '+' : ''}¥${stock.change.toFixed(2)} (${stock.changePercent}%)
+- 登録日: ${stock.addedDate}
+- 登録理由: ${stock.addedReason}
+
+${newsData && newsData.feed.length > 0 ? `【最近のニュース】\n${newsData.feed.slice(0, 3).map(n => `- ${n.title} (Sentiment: ${n.overall_sentiment_label})`).join('\n')}` : '【最近のニュース】\n（データなし）'}
+
+【分析項目】
+1. **ポジティブ要因**: 購入を後押しする材料（3つ以内）
+2. **ネガティブ要因**: 慎重になるべき材料（3つ以内）
+3. **学習ポイント**: この判断から学べること（初心者向け）
+4. **リスク管理**: 少額投資での注意点
+5. **アドバイス**: 今の状況での考え方（断定しない、教育的に）
+
+【重要な注意事項】
+- 「買え/売れ」と断定しない
+- 「絶対」「確実」禁止
+- 投資は自己責任であることを明記
+- 学習目的であることを強調
+
+JSON形式で回答してください。
+`;
+
+  const responseSchema = {
+    type: 'object',
+    properties: {
+      positive: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'ポジティブ要因（3つ以内）'
+      },
+      negative: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'ネガティブ要因（3つ以内）'
+      },
+      learningPoint: {
+        type: 'string',
+        description: '学習ポイント'
+      },
+      riskManagement: {
+        type: 'string',
+        description: 'リスク管理アドバイス'
+      },
+      advice: {
+        type: 'string',
+        description: '総合的なアドバイス'
+      }
+    },
+    required: ['positive', 'negative', 'learningPoint', 'riskManagement', 'advice']
+  };
+
+  const response = await fetchWithRetry('POST', geminiApiUrl, {
+    contents: [{ parts: [{ text: prompt }] }],
+    generationConfig: {
+      responseMimeType: 'application/json',
+      responseSchema: responseSchema,
+      temperature: 0.7,
+      maxOutputTokens: 2048
+    }
+  });
+
+  const analysisText = response.candidates[0].content.parts[0].text;
+  const analysis = JSON.parse(analysisText);
+
+  return {
+    ticker: stock.ticker,
+    name: stock.name,
+    analysis: analysis,
+    analyzedAt: new Date().toISOString()
   };
 }
 
@@ -3433,6 +3704,62 @@ function analyzeAndRecord(text) {
     }, 100);
   }
 
+  // === 購入タイミング分析コマンド ===
+  if ((lowerText.includes('買い時') || lowerText.includes('購入タイミング') ||
+       lowerText.includes('いつ買う') || lowerText.includes('買うべき')) &&
+      (lowerText.includes('株') || lowerText.includes('銘柄') || lowerText.includes('投資'))) {
+
+    // ウォッチリストから銘柄を特定
+    const watchlist = getWatchlist();
+    if (watchlist.length === 0) {
+      addSystemMessage('⚠️ ウォッチリストが空です。まず候補銘柄をウォッチリストに追加してください。');
+      return;
+    }
+
+    // 銘柄名やティッカーが含まれているか確認
+    let targetStock = null;
+    for (const stock of watchlist) {
+      if (lowerText.includes(stock.name.toLowerCase()) || lowerText.includes(stock.ticker.toLowerCase())) {
+        targetStock = stock;
+        break;
+      }
+    }
+
+    // 銘柄が特定できない場合は最初の銘柄を分析
+    if (!targetStock && watchlist.length === 1) {
+      targetStock = watchlist[0];
+    } else if (!targetStock) {
+      addSystemMessage(`⚠️ どの銘柄を分析しますか？以下から選んでください:\n${watchlist.map(s => `- ${s.name} (${s.ticker})`).join('\n')}`);
+      return;
+    }
+
+    addSystemMessage(`📊 ${targetStock.name}の購入タイミングを分析中...`);
+
+    setTimeout(async () => {
+      try {
+        const result = await analyzeStockTiming(targetStock.ticker);
+        const analysis = result.analysis;
+
+        let msg = `💹 ${result.name}の購入タイミング分析\n\n`;
+        msg += `【ポジティブ要因】\n${analysis.positive.map((p, i) => `${i + 1}. ${p}`).join('\n')}\n\n`;
+        msg += `【ネガティブ要因】\n${analysis.negative.map((n, i) => `${i + 1}. ${n}`).join('\n')}\n\n`;
+        msg += `【学習ポイント】\n${analysis.learningPoint}\n\n`;
+        msg += `【リスク管理】\n${analysis.riskManagement}\n\n`;
+        msg += `【アドバイス】\n${analysis.advice}\n\n`;
+        msg += `⚠️ 投資判断は最終的にご自身の責任でお願いします。`;
+
+        addSystemMessage(msg);
+      } catch (err) {
+        if (err.message.includes('APIキーが設定されていません')) {
+          addSystemMessage(`❌ ${err.message}`);
+          setTimeout(openSettings, 1000);
+        } else {
+          addSystemMessage(`❌ エラー: ${err.message}`);
+        }
+      }
+    }, 100);
+  }
+
   // 位置登録コマンド（会社・家の設定）
   if (lowerText.includes('ここが会社') || lowerText.includes('ここがオフィス') || lowerText.includes('ここが職場')) {
     (async () => {
@@ -3840,21 +4167,46 @@ function updateDashboard() {
 
     // === 投資・株関連のキーワード検出 ===
     if (text.includes('投資') || text.includes('株') || text.includes('銘柄') ||
-        text.includes('トレード') || text.includes('配当')) {
+        text.includes('トレード') || text.includes('配当') || text.includes('ウォッチ') ||
+        text.includes('監視') || text.includes('買い時') || text.includes('購入タイミング')) {
+      const watchlist = getWatchlist();
       const candidates = getInvestmentCandidates();
       const history = JSON.parse(localStorage.getItem('kitt_investment_analysis_history') || '[]');
 
       greeting = '💹 投資支援';
 
-      if (candidates.length === 0) {
-        comment = '銘柄候補がまだありません。「株の銘柄を探して」と話しかけると、学習向けの候補銘柄を提案します。';
-        hideCandidates();
-      } else {
+      // ウォッチリスト優先表示
+      if (watchlist.length > 0) {
+        const stats = getWatchlistStats();
+        const gainLossText = parseFloat(stats.totalGainLoss) >= 0
+          ? `+${stats.totalGainLoss}円`
+          : `${stats.totalGainLoss}円`;
+
+        comment = `ウォッチリスト ${stats.totalCount}件を監視中。\n上昇: ${stats.gainers}件、下落: ${stats.losers}件、合計損益: ${gainLossText}`;
+
+        // ウォッチリスト表示
+        displayWatchlist(watchlist);
+
+        // 候補銘柄も表示
+        if (candidates.length > 0) {
+          displayInvestmentCandidates(candidates);
+        } else {
+          hideCandidates();
+        }
+      } else if (candidates.length > 0) {
+        // ウォッチリストなし、候補銘柄のみ表示
         const latest = history[0];
         const trend = latest ? latest.marketTrend : '市場動向を分析中...';
-        comment = `${trend}\n\n注目銘柄 ${candidates.length}件を表示中。詳細は下記をご確認ください。`;
+        comment = `${trend}\n\n注目銘柄 ${candidates.length}件を表示中。「➕ウォッチ」で監視リストに追加できます。`;
 
+        hideCandidates();
         displayInvestmentCandidates(candidates);
+      } else {
+        // 両方なし
+        comment = '銘柄候補がまだありません。「株の銘柄を探して」と話しかけると、学習向けの候補銘柄を提案します。';
+        hideCandidates();
+        const watchlistArea = document.getElementById('watchlistArea');
+        if (watchlistArea) watchlistArea.style.display = 'none';
       }
     }
     // 飲み会関連のキーワード検出
