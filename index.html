@@ -1713,6 +1713,199 @@ function getInvestmentCandidates() {
   return JSON.parse(localStorage.getItem('kitt_investment_candidates') || '[]');
 }
 
+// --- Phase 2: ウォッチリスト機能 ---
+
+/**
+ * ウォッチリストに銘柄を追加
+ * @param {Object} candidate - 候補銘柄オブジェクト
+ * @param {string} userReason - ユーザー指定の追加理由（オプション）
+ * @returns {Array} 更新後のウォッチリスト
+ */
+function addToWatchlist(candidate, userReason = '') {
+  const watchlist = JSON.parse(localStorage.getItem('kitt_investment_watchlist') || '[]');
+
+  // 重複チェック
+  if (watchlist.some(item => item.ticker === candidate.symbol)) {
+    throw new Error(`${candidate.name}は既にウォッチリストに登録されています`);
+  }
+
+  watchlist.push({
+    ticker: candidate.symbol,
+    name: candidate.name,
+    sector: candidate.sector,
+    addedDate: new Date().toISOString().split('T')[0],
+    addedPrice: parseFloat(candidate.price),
+    addedReason: userReason || candidate.reason,
+    currentPrice: parseFloat(candidate.price),
+    change: 0,
+    changePercent: 0,
+    lastUpdated: new Date().toISOString(),
+    newsCount: 0,
+    lastNewsCheck: null
+  });
+
+  localStorage.setItem('kitt_investment_watchlist', JSON.stringify(watchlist));
+
+  // 候補リストから「追加済み」フラグを立てる
+  updateCandidateWatchlistStatus(candidate.symbol, true);
+
+  return watchlist;
+}
+
+/**
+ * ウォッチリストから銘柄を削除
+ * @param {string} ticker - ティッカーシンボル
+ * @returns {Array} 更新後のウォッチリスト
+ */
+function removeFromWatchlist(ticker) {
+  let watchlist = JSON.parse(localStorage.getItem('kitt_investment_watchlist') || '[]');
+  watchlist = watchlist.filter(item => item.ticker !== ticker);
+  localStorage.setItem('kitt_investment_watchlist', JSON.stringify(watchlist));
+
+  updateCandidateWatchlistStatus(ticker, false);
+
+  return watchlist;
+}
+
+/**
+ * ウォッチリストを取得
+ * @returns {Array} ウォッチリスト
+ */
+function getWatchlist() {
+  return JSON.parse(localStorage.getItem('kitt_investment_watchlist') || '[]');
+}
+
+/**
+ * 候補リストの「ウォッチリスト追加済み」状態を更新
+ * @param {string} ticker - ティッカーシンボル
+ * @param {boolean} added - 追加済みかどうか
+ */
+function updateCandidateWatchlistStatus(ticker, added) {
+  const candidates = getInvestmentCandidates();
+  const target = candidates.find(c => c.symbol === ticker);
+  if (target) {
+    target.addedToWatchlist = added;
+    localStorage.setItem('kitt_investment_candidates', JSON.stringify(candidates));
+  }
+}
+
+/**
+ * ウォッチリスト全銘柄の株価・ニュースを更新
+ * @returns {Object} 更新結果
+ */
+async function updateWatchlist() {
+  const watchlist = getWatchlist();
+
+  if (watchlist.length === 0) {
+    return { updated: 0, message: 'ウォッチリストが空です' };
+  }
+
+  const now = new Date();
+  const cache = JSON.parse(localStorage.getItem('kitt_investment_price_cache') || '{}');
+
+  let updatedCount = 0;
+
+  for (const item of watchlist) {
+    try {
+      // キャッシュチェック: 最終更新から6時間以内ならスキップ
+      const lastUpdate = cache[item.ticker] ? new Date(cache[item.ticker].timestamp) : null;
+      const hoursSinceUpdate = lastUpdate ? (now - lastUpdate) / (1000 * 60 * 60) : 999;
+
+      if (hoursSinceUpdate < 6) {
+        console.log(`[Cache] ${item.ticker}: ${hoursSinceUpdate.toFixed(1)}時間前に更新済み、スキップ`);
+        continue;
+      }
+
+      // API制限を考慮して1秒待機
+      await new Promise(r => setTimeout(r, 1000));
+
+      // 株価取得
+      const quote = await fetchStockQuote(item.ticker);
+
+      item.currentPrice = parseFloat(quote.price);
+      item.change = item.currentPrice - item.addedPrice;
+      item.changePercent = ((item.change / item.addedPrice) * 100).toFixed(2);
+      item.lastUpdated = now.toISOString();
+
+      // ニュース取得（週1回程度）
+      const daysSinceNewsCheck = item.lastNewsCheck
+        ? (now - new Date(item.lastNewsCheck)) / (1000 * 60 * 60 * 24)
+        : 999;
+
+      if (daysSinceNewsCheck >= 7) {
+        await new Promise(r => setTimeout(r, 1000));
+        const news = await fetchNewsSentiment(item.ticker);
+        item.newsCount = news.feed.length;
+        item.lastNewsCheck = now.toISOString();
+      }
+
+      // キャッシュ更新
+      cache[item.ticker] = {
+        price: quote.price,
+        timestamp: now.toISOString()
+      };
+
+      updatedCount++;
+
+    } catch (err) {
+      console.error(`[Error] ${item.ticker} update failed:`, err);
+      // エラーでも処理継続
+    }
+  }
+
+  localStorage.setItem('kitt_investment_watchlist', JSON.stringify(watchlist));
+  localStorage.setItem('kitt_investment_price_cache', JSON.stringify(cache));
+
+  return {
+    updated: updatedCount,
+    total: watchlist.length,
+    message: `${updatedCount}/${watchlist.length}件の銘柄を更新しました`
+  };
+}
+
+/**
+ * ウォッチリスト統計情報を取得
+ * @returns {Object} 統計情報
+ */
+function getWatchlistStats() {
+  const watchlist = getWatchlist();
+
+  if (watchlist.length === 0) {
+    return {
+      totalCount: 0,
+      gainers: 0,
+      losers: 0,
+      totalGainLoss: 0,
+      lastUpdated: null
+    };
+  }
+
+  let gainers = 0;
+  let losers = 0;
+  let totalGainLoss = 0;
+
+  watchlist.forEach(item => {
+    const change = parseFloat(item.change || 0);
+    if (change > 0) gainers++;
+    else if (change < 0) losers++;
+    totalGainLoss += change;
+  });
+
+  const timestamps = watchlist
+    .map(item => item.lastUpdated)
+    .filter(Boolean)
+    .sort()
+    .reverse();
+
+  return {
+    totalCount: watchlist.length,
+    gainers,
+    losers,
+    totalGainLoss: totalGainLoss.toFixed(2),
+    lastUpdated: timestamps[0] || null
+  };
+}
+
 // --- Phase 1.5: Analyze & Save ---
 let lastAnalysis = null;
 
@@ -3553,6 +3746,12 @@ function displayInvestmentCandidates(candidates) {
                       c.riskLevel === 'medium' ? '#ccaa66' : '#cc8888';
     const changeColor = c.change && parseFloat(c.change) >= 0 ? '#88cc88' : '#cc8888';
 
+    // ウォッチリスト追加済みかチェック
+    const isInWatchlist = c.addedToWatchlist || false;
+    const addButtonHtml = isInWatchlist
+      ? `<button style="font-size:10px;padding:4px 8px;border:none;background:#333;color:#888;border-radius:4px;cursor:not-allowed;" disabled>追加済み</button>`
+      : `<button onclick="handleAddToWatchlist('${c.symbol}')" style="font-size:10px;padding:4px 8px;border:none;background:#ff2200;color:#fff;border-radius:4px;cursor:pointer;">➕ ウォッチ</button>`;
+
     html += `
       <div style="border: 1px solid #2a2a2a; border-radius: 6px; padding: 8px; margin-bottom: 6px; background: #1a1a1a;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
@@ -3560,8 +3759,11 @@ function displayInvestmentCandidates(candidates) {
             <span style="font-weight: bold; color: #ff8866;">${c.name}</span>
             <span style="font-size: 11px; color: #888; margin-left: 6px;">${c.symbol}</span>
           </div>
-          <div style="font-size: 11px; padding: 2px 6px; border-radius: 8px; background: ${riskColor}; color: #000;">
-            ${c.riskLevel.toUpperCase()}
+          <div style="display:flex;gap:4px;align-items:center;">
+            <div style="font-size: 11px; padding: 2px 6px; border-radius: 8px; background: ${riskColor}; color: #000;">
+              ${c.riskLevel.toUpperCase()}
+            </div>
+            ${addButtonHtml}
           </div>
         </div>
         <div style="font-size: 11px; color: #aaa; margin-bottom: 4px;">
@@ -3584,6 +3786,31 @@ function displayInvestmentCandidates(candidates) {
 
   listEl.innerHTML = html;
   container.style.display = 'block';
+}
+
+/**
+ * ウォッチ追加ボタンのクリックハンドラー
+ * @param {string} ticker - ティッカーシンボル
+ */
+async function handleAddToWatchlist(ticker) {
+  try {
+    const candidates = getInvestmentCandidates();
+    const candidate = candidates.find(c => c.symbol === ticker);
+
+    if (!candidate) {
+      throw new Error('銘柄情報が見つかりません');
+    }
+
+    addToWatchlist(candidate);
+
+    addSystemMessage(`✅ ${candidate.name}をウォッチリストに追加しました！`);
+
+    // ダッシュボード再描画
+    setTimeout(updateDashboard, 500);
+
+  } catch (err) {
+    addSystemMessage(`❌ ${err.message}`);
+  }
 }
 
 /**
