@@ -539,6 +539,13 @@ body {
 <div class="greeting-area" id="greetingArea" style="padding: 16px; margin: 0 16px; background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); margin-bottom: 12px;">
   <div id="greetingMessage" style="font-size: 18px; font-weight: bold; color: #00ff00; margin-bottom: 8px;"></div>
   <div id="contextualComment" style="font-size: 14px; color: #b0b0b0; line-height: 1.5;"></div>
+  <!-- 投資銘柄候補表示エリア -->
+  <div id="investmentCandidates" style="margin-top: 12px; display: none;">
+    <div style="font-size: 12px; color: #ff8866; margin-bottom: 8px; border-bottom: 1px solid #2a2a2a; padding-bottom: 4px;">
+      💹 注目銘柄候補
+    </div>
+    <div id="candidatesList" style="font-size: 13px; color: #ccc; line-height: 1.6;"></div>
+  </div>
 </div>
 
 <div class="chat-area" id="chatArea">
@@ -561,6 +568,12 @@ body {
     <h2>Settings</h2>
     <label>Gemini API Key</label>
     <input type="password" id="apiKeyInput" placeholder="AIza...">
+    <label>Alpha Vantage API Key（株価データ取得用）</label>
+    <input type="password" id="alphaVantageApiKeyInput" placeholder="Your Alpha Vantage API Key">
+    <div style="font-size: 11px; color: #888; margin-top: 2px; margin-bottom: 12px;">
+      無料プラン: 5リクエスト/分、500リクエスト/日。
+      <a href="https://www.alphavantage.co/support/#api-key" target="_blank" style="color: #ff8866;">取得はこちら</a>
+    </div>
     <label>System Prompt（K.I.T.T.のキャラ設定）</label>
     <input type="text" id="systemPromptInput" placeholder="デフォルト使用">
     <label>エクスポート保存先 <span id="exportDirName" style="color:#88cc88;font-size:12px;"></span></label>
@@ -1364,6 +1377,101 @@ async function callGemini(userText) {
   return candidate.content?.parts?.[0]?.text || '(空の応答)';
 }
 
+// ========================================
+// Alpha Vantage API統合
+// ========================================
+
+/**
+ * Alpha Vantage APIキーを暗号化して保存
+ */
+async function saveAlphaVantageApiKey(apiKey) {
+  const encrypted = await encryptApiKey(apiKey);
+  if (encrypted) {
+    localStorage.setItem('alpha_vantage_api_key_encrypted', encrypted);
+  }
+}
+
+/**
+ * Alpha Vantage APIキーを読み込み・復号化
+ */
+async function loadAlphaVantageApiKey() {
+  const encryptedKey = localStorage.getItem('alpha_vantage_api_key_encrypted');
+  if (encryptedKey) {
+    return await decryptApiKey(encryptedKey);
+  }
+  return '';
+}
+
+/**
+ * Alpha Vantage APIで株価取得（GLOBAL_QUOTE）
+ */
+async function fetchStockQuote(symbol) {
+  const apiKey = await loadAlphaVantageApiKey();
+  if (!apiKey) {
+    throw new Error('Alpha Vantage APIキーが設定されていません');
+  }
+
+  const url = `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${symbol}&apikey=${apiKey}`;
+
+  const res = await fetch(url);
+  if (!res.ok) {
+    throw new Error(`Alpha Vantage API Error: ${res.status}`);
+  }
+
+  const data = await res.json();
+
+  if (data['Error Message']) {
+    throw new Error(data['Error Message']);
+  }
+  if (data['Note']) {
+    throw new Error('Alpha Vantage API制限に到達しました（無料プランは5リクエスト/分、500リクエスト/日）');
+  }
+
+  const quote = data['Global Quote'];
+  if (!quote) {
+    throw new Error(`銘柄データが見つかりません: ${symbol}`);
+  }
+
+  return {
+    symbol: quote['01. symbol'],
+    price: quote['05. price'],
+    change: quote['09. change'],
+    changePercent: quote['10. change percent']
+  };
+}
+
+/**
+ * Alpha Vantage APIでニュースセンチメント取得
+ */
+async function fetchNewsSentiment(symbol) {
+  const apiKey = await loadAlphaVantageApiKey();
+  if (!apiKey) {
+    return { feed: [], overallSentiment: 0 };
+  }
+
+  const url = `https://www.alphavantage.co/query?function=NEWS_SENTIMENT&tickers=${symbol}&apikey=${apiKey}`;
+
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return { feed: [], overallSentiment: 0 };
+
+    const data = await res.json();
+    if (data['Note'] || data['Error Message']) {
+      return { feed: [], overallSentiment: 0 };
+    }
+
+    const feed = data.feed || [];
+    const overallSentiment = feed.length > 0
+      ? feed.reduce((sum, item) => sum + (item.overall_sentiment_score || 0), 0) / feed.length
+      : 0;
+
+    return { feed, overallSentiment };
+  } catch (err) {
+    console.warn('News sentiment fetch failed:', err);
+    return { feed: [], overallSentiment: 0 };
+  }
+}
+
 // --- History ---
 function saveHistory() {
   localStorage.setItem('kitt_history', JSON.stringify(chatHistory));
@@ -1382,10 +1490,15 @@ function clearHistory() {
 }
 
 // --- Settings ---
-function openSettings() {
+async function openSettings() {
   document.getElementById('apiKeyInput').value = apiKey;
   document.getElementById('systemPromptInput').value =
     systemPrompt === DEFAULT_SYSTEM_PROMPT ? '' : systemPrompt;
+
+  // Alpha Vantage APIキーの読み込み
+  const alphaVantageKey = await loadAlphaVantageApiKey();
+  document.getElementById('alphaVantageApiKeyInput').value = alphaVantageKey;
+
   const dirName = document.getElementById('exportDirName');
   dirName.textContent = savedDirHandle ? `（設定済み: ${savedDirHandle.name}/）` : '（未設定）';
   document.getElementById('settingsModal').classList.add('active');
@@ -1407,6 +1520,12 @@ async function saveSettings() {
       localStorage.setItem('kitt_api_key_encrypted', encrypted);
       localStorage.removeItem('kitt_api_key'); // 旧データを削除（念のため）
     }
+  }
+
+  // Alpha Vantage APIキーの保存
+  const alphaVantageKey = document.getElementById('alphaVantageApiKeyInput').value.trim();
+  if (alphaVantageKey) {
+    await saveAlphaVantageApiKey(alphaVantageKey);
   }
 
   if (prompt) {
@@ -1434,6 +1553,160 @@ function handleKeyDown(e) {
 function autoResize(el) {
   el.style.height = 'auto';
   el.style.height = Math.min(el.scrollHeight, 100) + 'px';
+}
+
+// ========================================
+// Gemini API 銘柄分析
+// ========================================
+
+/**
+ * Gemini APIで銘柄分析・候補生成
+ */
+async function generateInvestmentCandidates(userContext = '') {
+  if (!apiKey) {
+    throw new Error('Gemini APIキーが設定されていません');
+  }
+
+  const alphaVantageKey = await loadAlphaVantageApiKey();
+  if (!alphaVantageKey) {
+    throw new Error('Alpha Vantage APIキーが設定されていません。Settingsから設定してください。');
+  }
+
+  const prompt = `あなたは投資学習支援アシストです。現在の日本株市場について、初心者向けの銘柄候補を3-5銘柄提案してください。
+
+【分析条件】
+- 対象: 東京証券取引所プライム市場
+- 目的: マネーリテラシー向上のための学習（少額・長期）
+- ユーザー文脈: ${userContext || '特になし（バランス重視）'}
+
+【出力フォーマット】
+厳密に以下のJSON形式で出力してください:
+
+{
+  "marketTrend": "現在の市場全体の傾向（2-3文で）",
+  "candidates": [
+    {
+      "symbol": "7203.T",
+      "name": "トヨタ自動車",
+      "reason": "推奨理由（配当・成長性・安定性など。50文字以内）",
+      "sector": "自動車",
+      "riskLevel": "low/medium/high"
+    }
+  ]
+}
+
+【注意事項】
+- 必ず3-5銘柄を提案
+- symbolは東証のティッカーシンボル形式（例: 7203.T）
+- 初心者向けに分かりやすく
+- 投資は自己責任であることを忘れない`;
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+
+  const body = {
+    contents: [{
+      role: 'user',
+      parts: [{ text: prompt }]
+    }],
+    generationConfig: {
+      temperature: 0.3,
+      maxOutputTokens: 4096,
+      responseMimeType: 'application/json',
+      responseSchema: {
+        type: 'object',
+        properties: {
+          marketTrend: { type: 'string' },
+          candidates: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                symbol: { type: 'string' },
+                name: { type: 'string' },
+                reason: { type: 'string' },
+                sector: { type: 'string' },
+                riskLevel: { type: 'string', enum: ['low', 'medium', 'high'] }
+              },
+              required: ['symbol', 'name', 'reason', 'sector', 'riskLevel']
+            }
+          }
+        },
+        required: ['marketTrend', 'candidates']
+      }
+    }
+  };
+
+  const res = await fetchWithRetry(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-goog-api-key': apiKey
+    },
+    body: JSON.stringify(body)
+  });
+
+  const data = res._parsedData || await res.json();
+  const candidate = data.candidates?.[0];
+  if (!candidate) {
+    throw new Error('銘柄分析の応答がありませんでした');
+  }
+
+  const resultText = candidate.content?.parts?.[0]?.text || '{}';
+  const analysis = JSON.parse(resultText);
+
+  // 各候補銘柄の株価を取得
+  const enrichedCandidates = [];
+  for (const c of analysis.candidates) {
+    try {
+      // API制限を考慮して1秒待機
+      await new Promise(r => setTimeout(r, 1000));
+
+      const quote = await fetchStockQuote(c.symbol);
+      const news = await fetchNewsSentiment(c.symbol);
+
+      enrichedCandidates.push({
+        ...c,
+        price: quote.price,
+        change: quote.change,
+        changePercent: quote.changePercent,
+        sentiment: news.overallSentiment,
+        generatedAt: new Date().toISOString(),
+        addedToWatchlist: false
+      });
+    } catch (err) {
+      console.warn(`Failed to fetch data for ${c.symbol}:`, err);
+      enrichedCandidates.push({
+        ...c,
+        price: '取得失敗',
+        change: '-',
+        changePercent: '-',
+        sentiment: 0,
+        generatedAt: new Date().toISOString(),
+        addedToWatchlist: false
+      });
+    }
+  }
+
+  localStorage.setItem('kitt_investment_candidates', JSON.stringify(enrichedCandidates));
+
+  const history = JSON.parse(localStorage.getItem('kitt_investment_analysis_history') || '[]');
+  history.unshift({
+    timestamp: new Date().toISOString(),
+    marketTrend: analysis.marketTrend,
+    candidatesCount: enrichedCandidates.length,
+    queryContext: userContext
+  });
+  if (history.length > 10) history.length = 10;
+  localStorage.setItem('kitt_investment_analysis_history', JSON.stringify(history));
+
+  return { marketTrend: analysis.marketTrend, candidates: enrichedCandidates };
+}
+
+/**
+ * 銘柄候補を取得
+ */
+function getInvestmentCandidates() {
+  return JSON.parse(localStorage.getItem('kitt_investment_candidates') || '[]');
 }
 
 // --- Phase 1.5: Analyze & Save ---
@@ -2920,6 +3193,40 @@ async function updateExpenseLocations(limit = 10) {
 function analyzeAndRecord(text) {
   const lowerText = text.toLowerCase();
 
+  // === 投資・銘柄発掘コマンド ===
+  if ((lowerText.includes('株') || lowerText.includes('銘柄') || lowerText.includes('投資')) &&
+      (lowerText.includes('探し') || lowerText.includes('おすすめ') || lowerText.includes('候補') ||
+       lowerText.includes('発掘') || lowerText.includes('分析'))) {
+
+    // ユーザー文脈を抽出（配当、成長、安定など）
+    let context = '';
+    if (lowerText.includes('配当')) context = '配当重視';
+    else if (lowerText.includes('成長')) context = '成長性重視';
+    else if (lowerText.includes('安定')) context = '安定性重視';
+    else if (lowerText.includes('初心者')) context = '初心者向け';
+
+    addSystemMessage('💹 銘柄分析を開始します。市場動向を調査中...');
+
+    setTimeout(async () => {
+      try {
+        const result = await generateInvestmentCandidates(context);
+        addSystemMessage(`✅ ${result.candidates.length}件の銘柄候補を生成しました！`);
+
+        // ダッシュボードを更新
+        setTimeout(updateDashboard, 500);
+      } catch (err) {
+        if (err.message.includes('APIキーが設定されていません')) {
+          addSystemMessage(`❌ ${err.message}`);
+          setTimeout(openSettings, 1000);
+        } else if (err.message.includes('API制限')) {
+          addSystemMessage(`⚠️ ${err.message}\n少し時間をおいてから再度お試しください。`);
+        } else {
+          addSystemMessage(`❌ エラー: ${err.message}`);
+        }
+      }
+    }, 100);
+  }
+
   // 位置登録コマンド（会社・家の設定）
   if (lowerText.includes('ここが会社') || lowerText.includes('ここがオフィス') || lowerText.includes('ここが職場')) {
     (async () => {
@@ -3218,6 +3525,64 @@ function analyzeAndRecord(text) {
 }
 
 // --- Dynamic Dashboard System ---
+/**
+ * 銘柄候補をダッシュボードに表示
+ */
+function displayInvestmentCandidates(candidates) {
+  const container = document.getElementById('investmentCandidates');
+  const listEl = document.getElementById('candidatesList');
+
+  if (!container || !listEl) return;
+
+  let html = '';
+  candidates.forEach((c, i) => {
+    const riskColor = c.riskLevel === 'low' ? '#88cc88' :
+                      c.riskLevel === 'medium' ? '#ccaa66' : '#cc8888';
+    const changeColor = c.change && parseFloat(c.change) >= 0 ? '#88cc88' : '#cc8888';
+
+    html += `
+      <div style="border: 1px solid #2a2a2a; border-radius: 6px; padding: 8px; margin-bottom: 6px; background: #1a1a1a;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+          <div>
+            <span style="font-weight: bold; color: #ff8866;">${c.name}</span>
+            <span style="font-size: 11px; color: #888; margin-left: 6px;">${c.symbol}</span>
+          </div>
+          <div style="font-size: 11px; padding: 2px 6px; border-radius: 8px; background: ${riskColor}; color: #000;">
+            ${c.riskLevel.toUpperCase()}
+          </div>
+        </div>
+        <div style="font-size: 11px; color: #aaa; margin-bottom: 4px;">
+          セクター: ${c.sector}
+        </div>
+        <div style="font-size: 12px; color: #ccc; margin-bottom: 4px;">
+          ${c.reason}
+        </div>
+        <div style="display: flex; justify-content: space-between; font-size: 11px;">
+          <div>
+            価格: <span style="font-weight: bold; color: #fff;">${c.price}</span>
+          </div>
+          <div style="color: ${changeColor};">
+            ${c.change} (${c.changePercent})
+          </div>
+        </div>
+      </div>
+    `;
+  });
+
+  listEl.innerHTML = html;
+  container.style.display = 'block';
+}
+
+/**
+ * 銘柄候補エリアを非表示
+ */
+function hideCandidates() {
+  const container = document.getElementById('investmentCandidates');
+  if (container) {
+    container.style.display = 'none';
+  }
+}
+
 function updateDashboard() {
   const now = new Date();
   const hour = now.getHours();
@@ -3233,8 +3598,27 @@ function updateDashboard() {
   if (lastUserMessage && lastUserMessage.text) {
     const text = lastUserMessage.text.toLowerCase();
 
+    // === 投資・株関連のキーワード検出 ===
+    if (text.includes('投資') || text.includes('株') || text.includes('銘柄') ||
+        text.includes('トレード') || text.includes('配当')) {
+      const candidates = getInvestmentCandidates();
+      const history = JSON.parse(localStorage.getItem('kitt_investment_analysis_history') || '[]');
+
+      greeting = '💹 投資支援';
+
+      if (candidates.length === 0) {
+        comment = '銘柄候補がまだありません。「株の銘柄を探して」と話しかけると、学習向けの候補銘柄を提案します。';
+        hideCandidates();
+      } else {
+        const latest = history[0];
+        const trend = latest ? latest.marketTrend : '市場動向を分析中...';
+        comment = `${trend}\n\n注目銘柄 ${candidates.length}件を表示中。詳細は下記をご確認ください。`;
+
+        displayInvestmentCandidates(candidates);
+      }
+    }
     // 飲み会関連のキーワード検出
-    if (text.includes('飲み会') || text.includes('飲み') || text.includes('お酒')) {
+    else if (text.includes('飲み会') || text.includes('飲み') || text.includes('お酒')) {
       const stats = getDrinkingStats();
       const locations = getUserLocations();
       const pending = getPendingDrinkingConfirmations().filter(p => p.status === 'pending');
@@ -3341,11 +3725,13 @@ function updateDashboard() {
       // デフォルトの時間帯別挨拶
       greeting = getTimeBasedGreeting(hour);
       comment = getTimeBasedComment(hour, chatHistory.length);
+      hideCandidates();
     }
   } else {
     // 初回または会話履歴がない場合：時間帯別挨拶
     greeting = getTimeBasedGreeting(hour);
     comment = getTimeBasedComment(hour, chatHistory.length);
+    hideCandidates();
   }
 
   // DOM更新
