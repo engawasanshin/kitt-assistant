@@ -1366,7 +1366,7 @@ async function callGemini(userText) {
   const body = {
     contents,
     systemInstruction: {
-      parts: [{ text: systemPrompt + getCurrentTimeContext() + getMemoryContext() + statusContext }]
+      parts: [{ text: systemPrompt + getCurrentTimeContext() + getMemoryContext() + getEventLogContext() + statusContext }]
     },
     generationConfig: {
       temperature: 0.8,
@@ -2853,22 +2853,165 @@ function renderStatusBoard(data) {
 // --- Recording System ---
 // 相対日時を絶対日付に変換
 function parseRelativeDate(text) {
+  const result = extractDatetimeFromText(text);
+  return result.date;
+}
+
+// 拡張版: テキストから日時情報を抽出
+// returns { date: 'YYYY-MM-DD', time: 'HH:MM'|null, confidence: 'high'|'medium'|'low', expression: string }
+function extractDatetimeFromText(text) {
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  let targetDate = today;
+  let confidence = 'high';
+  let expression = '今日';
+  let time = null;
 
-  if (text.includes('今日')) {
-    return formatDate(today);
-  } else if (text.includes('昨日')) {
-    const yesterday = new Date(today);
-    yesterday.setDate(yesterday.getDate() - 1);
-    return formatDate(yesterday);
-  } else if (text.includes('明日')) {
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    return formatDate(tomorrow);
+  // M月D日 パターン (例: 3月22日)
+  const mdMatch = text.match(/(\d{1,2})月(\d{1,2})日/);
+  if (mdMatch) {
+    const m = parseInt(mdMatch[1]) - 1;
+    const d = parseInt(mdMatch[2]);
+    const candidate = new Date(now.getFullYear(), m, d);
+    // 未来すぎる場合は前年
+    if (candidate > now && (candidate - now) > 180 * 24 * 3600 * 1000) {
+      candidate.setFullYear(now.getFullYear() - 1);
+    }
+    targetDate = candidate;
+    expression = mdMatch[0];
+    confidence = 'high';
   }
-  // デフォルトは今日
-  return formatDate(today);
+  // 曜日指定 (例: 月曜、火曜日)
+  else if (/[月火水木金土日]曜/.test(text)) {
+    const weekdays = { '日': 0, '月': 1, '火': 2, '水': 3, '木': 4, '金': 5, '土': 6 };
+    const wMatch = text.match(/([月火水木金土日])曜/);
+    const targetWday = weekdays[wMatch[1]];
+    const diff = (now.getDay() - targetWday + 7) % 7 || 7;
+    targetDate = new Date(today);
+    targetDate.setDate(today.getDate() - diff);
+    expression = wMatch[0];
+    confidence = 'medium';
+  }
+  // 先週
+  else if (text.includes('先週')) {
+    targetDate = new Date(today);
+    targetDate.setDate(today.getDate() - 7);
+    expression = '先週';
+    confidence = 'medium';
+  }
+  // 先月
+  else if (text.includes('先月')) {
+    targetDate = new Date(today);
+    targetDate.setMonth(today.getMonth() - 1);
+    expression = '先月';
+    confidence = 'low';
+  }
+  // 昨日
+  else if (text.includes('昨日') || text.includes('きのう')) {
+    targetDate = new Date(today);
+    targetDate.setDate(today.getDate() - 1);
+    expression = '昨日';
+  }
+  // 明日
+  else if (text.includes('明日') || text.includes('あした')) {
+    targetDate = new Date(today);
+    targetDate.setDate(today.getDate() + 1);
+    expression = '明日';
+  }
+  // 今日・本日・今朝・今夜・さっき
+  else if (text.includes('今日') || text.includes('本日') || text.includes('今朝') ||
+           text.includes('今夜') || text.includes('今晩') || text.includes('さっき') ||
+           text.includes('ついさっき') || text.includes('今昼') || text.includes('今')) {
+    targetDate = today;
+    expression = '今日';
+  }
+
+  // 時刻抽出 (例: 15時、3時半、15:30)
+  const timeMatch = text.match(/(\d{1,2})[時:](\d{2})?[分]?/);
+  if (timeMatch) {
+    const h = String(parseInt(timeMatch[1])).padStart(2, '0');
+    const m = String(parseInt(timeMatch[2] || '0')).padStart(2, '0');
+    time = `${h}:${m}`;
+  }
+
+  return { date: formatDate(targetDate), time, confidence, expression };
+}
+
+// ===== イベントログ機能 =====
+
+// イベントを保存
+function addEventLog(eventText, dateInfo) {
+  const logs = JSON.parse(localStorage.getItem('kitt_event_log') || '[]');
+  logs.unshift({
+    event: eventText,
+    date: dateInfo.date,
+    time: dateInfo.time,
+    confidence: dateInfo.confidence,
+    expression: dateInfo.expression,
+    recordedAt: new Date().toISOString()
+  });
+  // 最大100件
+  if (logs.length > 100) logs.length = 100;
+  localStorage.setItem('kitt_event_log', JSON.stringify(logs));
+}
+
+// イベントログをシステムプロンプト用に整形
+function getEventLogContext() {
+  const logs = JSON.parse(localStorage.getItem('kitt_event_log') || '[]');
+  if (logs.length === 0) return '';
+
+  const recent = logs.slice(0, 30);
+  let ctx = '\n\n--- 記録されたイベントと日時 ---\n';
+  ctx += '（ユーザーの発言から自動抽出。日時の確信度: high=明示/medium=推定/low=不確か）\n';
+  recent.forEach(log => {
+    const timeStr = log.time ? ` ${log.time}` : '';
+    const confStr = log.confidence !== 'high' ? ` [確信度:${log.confidence}]` : '';
+    ctx += `- ${log.date}${timeStr}${confStr}: ${log.event}（「${log.expression}」より）\n`;
+  });
+  ctx += '\n【重要】ユーザーが「いつのこと？」「日時は？」と聞かれたら、このイベントログを参照してください。';
+  return ctx;
+}
+
+// テキストから完了イベントを検出
+function detectCompletedEvents(text) {
+  const events = [];
+
+  // 完了・達成を示すパターン
+  const completionPatterns = [
+    /(.{2,20})(しました|終わりました|完了しました|できました|済みました|達成しました)/,
+    /(.{2,20})(した|終わった|完了した|できた|済んだ|達成した)/,
+    /(.{2,20})(が終わり|が完了|が済み)/,
+  ];
+
+  // 重要イベントのキーワード（これらが含まれる場合は記録優先度UP）
+  const importantKeywords = [
+    '送金', '移動', '購入', '売却', '実装', '完成', '完了', '作成', '登録', '申込',
+    'インストール', '設定', '更新', '解約', '契約', '支払', '手術', '入院', '退院',
+    '出発', '到着', '予約', '取得', '発売', '受験', 'テスト', '引越', '転職'
+  ];
+
+  for (const pattern of completionPatterns) {
+    const match = text.match(pattern);
+    if (match) {
+      const eventDesc = match[1].trim() + match[2];
+      events.push(eventDesc);
+      break; // 1文から1イベント
+    }
+  }
+
+  // キーワードが含まれて完了形でない場合もチェック
+  if (events.length === 0) {
+    for (const kw of importantKeywords) {
+      if (text.includes(kw)) {
+        // 短い文全体をイベントとして扱う
+        const shortened = text.length > 30 ? text.slice(0, 30) + '…' : text;
+        events.push(shortened);
+        break;
+      }
+    }
+  }
+
+  return events;
 }
 
 function formatDate(date) {
@@ -3660,6 +3803,15 @@ async function updateExpenseLocations(limit = 10) {
 // ユーザーメッセージを分析して自動記録
 function analyzeAndRecord(text) {
   const lowerText = text.toLowerCase();
+
+  // === イベント日時の自動検出・記録 ===
+  const detectedEvents = detectCompletedEvents(text);
+  if (detectedEvents.length > 0) {
+    const dateInfo = extractDatetimeFromText(text);
+    detectedEvents.forEach(event => {
+      addEventLog(event, dateInfo);
+    });
+  }
 
   // === 投資・銘柄発掘コマンド ===
   if ((lowerText.includes('株') || lowerText.includes('銘柄') || lowerText.includes('投資')) &&
