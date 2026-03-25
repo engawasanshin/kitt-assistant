@@ -2370,8 +2370,18 @@ async function handleTechnicalAnalysis(ticker) {
     const a = result.analysis;
     const ind = result.indicators;
 
-    let msg = `📈 テクニカル分析: ${name}（${ticker}）\n`;
-    msg += `期間: ${result.hist.dates[0]} 〜 ${result.hist.dates[result.hist.dates.length - 1]}\n`;
+    // チャートモーダルを表示
+    document.getElementById('chartModalTitle').textContent =
+      `📈 ${name}（${ticker}） テクニカル分析`;
+    openChartModal();
+
+    // Canvasが描画可能になるのを少し待ってから描画
+    setTimeout(() => {
+      drawStockChart(result.hist, ind);
+    }, 80);
+
+    // テキスト分析
+    let msg = `期間: ${result.hist.dates[0]} 〜 ${result.hist.dates[result.hist.dates.length - 1]}\n`;
     msg += `━━━━━━━━━━━━━━━━━━━\n`;
     msg += `【現在価格】¥${ind.latest.toFixed(1)}\n`;
     msg += `　5日MA: ¥${ind.latestSma5?.toFixed(1) ?? 'N/A'} / 25日MA: ¥${ind.latestSma25?.toFixed(1) ?? 'N/A'}\n`;
@@ -2385,7 +2395,11 @@ async function handleTechnicalAnalysis(ticker) {
     msg += `【学習ポイント】\n${a.learningNote}\n\n`;
     msg += `⚠️ ${a.disclaimer}`;
 
-    addSystemMessage(msg);
+    document.getElementById('chartAnalysisText').textContent = msg;
+
+    // チャットにも簡易サマリーを表示
+    addSystemMessage(`📈 ${name} テクニカル分析完了 → チャートを表示中\nトレンド: ${a.trend}\n${ind.crossSignal !== 'なし' ? 'シグナル: ' + ind.crossSignal + '\n' : ''}チャートモーダルで詳細を確認してください。`);
+
   } catch (err) {
     if (err.message.includes('APIキーが設定されていません')) {
       addSystemMessage(`❌ ${err.message}`);
@@ -2395,6 +2409,163 @@ async function handleTechnicalAnalysis(ticker) {
     } else {
       addSystemMessage(`❌ テクニカル分析エラー: ${err.message}`);
     }
+  }
+}
+
+// ===== Phase 4: チャート描画 =====
+
+function openChartModal() {
+  document.getElementById('chartModal').style.display = 'block';
+  document.body.style.overflow = 'hidden';
+}
+
+function closeChartModal() {
+  document.getElementById('chartModal').style.display = 'none';
+  document.body.style.overflow = '';
+}
+
+function drawStockChart(hist, indicators) {
+  const canvas = document.getElementById('stockChartCanvas');
+  if (!canvas) return;
+
+  const { dates, opens, highs, lows, closes } = hist;
+  const n = dates.length;
+  const sma5  = calcSMA(closes, 5);
+  const sma25 = calcSMA(closes, 25);
+  const bb    = calcBollingerBands(closes, 20, 2);
+
+  // Canvasサイズをデバイスピクセル比に合わせてHiDPI対応
+  const dpr = window.devicePixelRatio || 1;
+  const displayW = canvas.parentElement.clientWidth - 24;
+  const displayH = Math.min(displayW * 0.65, 280);
+  canvas.style.width  = displayW + 'px';
+  canvas.style.height = displayH + 'px';
+  canvas.width  = displayW * dpr;
+  canvas.height = displayH * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  const W = displayW;
+  const H = displayH;
+
+  // マージン
+  const mL = 52, mR = 8, mT = 14, mB = 26;
+  const cW = W - mL - mR;
+  const cH = H - mT - mB;
+
+  // 価格レンジ（ボリンジャー上下限含む）
+  const allVals = [
+    ...highs, ...lows,
+    ...bb.map(b => b.upper).filter(v => v !== null),
+    ...bb.map(b => b.lower).filter(v => v !== null)
+  ];
+  const rawMin = Math.min(...allVals);
+  const rawMax = Math.max(...allVals);
+  const pad = (rawMax - rawMin) * 0.06;
+  const minP = rawMin - pad;
+  const maxP = rawMax + pad;
+  const range = maxP - minP;
+
+  const xOf = (i) => mL + (i + 0.5) * (cW / n);
+  const yOf = (p) => mT + cH - (p - minP) / range * cH;
+
+  // ── 背景
+  ctx.fillStyle = '#111';
+  ctx.fillRect(0, 0, W, H);
+
+  // ── グリッド線（横）
+  ctx.strokeStyle = '#222';
+  ctx.lineWidth = 0.5;
+  const gridCount = 4;
+  for (let g = 0; g <= gridCount; g++) {
+    const py = mT + (cH / gridCount) * g;
+    ctx.beginPath(); ctx.moveTo(mL, py); ctx.lineTo(W - mR, py); ctx.stroke();
+    // 価格ラベル
+    const lp = maxP - (range / gridCount) * g;
+    ctx.fillStyle = '#555';
+    ctx.font = `${9 * dpr / dpr}px Courier New`;
+    ctx.textAlign = 'right';
+    ctx.fillText(lp.toFixed(0), mL - 2, py + 3);
+  }
+
+  // ── ボリンジャーバンド（塗りつぶし）
+  ctx.beginPath();
+  let started = false;
+  for (let i = 0; i < n; i++) {
+    if (bb[i].upper === null) continue;
+    if (!started) { ctx.moveTo(xOf(i), yOf(bb[i].upper)); started = true; }
+    else ctx.lineTo(xOf(i), yOf(bb[i].upper));
+  }
+  for (let i = n - 1; i >= 0; i--) {
+    if (bb[i].lower === null) continue;
+    ctx.lineTo(xOf(i), yOf(bb[i].lower));
+  }
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(100, 180, 255, 0.07)';
+  ctx.fill();
+
+  // ボリンジャー上下線
+  const drawLine = (arr, color, width = 1) => {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    ctx.beginPath();
+    let mv = true;
+    for (let i = 0; i < n; i++) {
+      const v = Array.isArray(arr) ? arr[i] : arr[i];
+      if (v === null || v === undefined) { mv = true; continue; }
+      if (mv) { ctx.moveTo(xOf(i), yOf(v)); mv = false; }
+      else ctx.lineTo(xOf(i), yOf(v));
+    }
+    ctx.stroke();
+  };
+  drawLine(bb.map(b => b.upper), 'rgba(80,140,220,0.45)', 1);
+  drawLine(bb.map(b => b.lower), 'rgba(80,140,220,0.45)', 1);
+  drawLine(bb.map(b => b.middle), 'rgba(80,140,220,0.3)', 0.8);
+
+  // ── ローソク足
+  const barW = Math.max(cW / n * 0.6, 2);
+  for (let i = 0; i < n; i++) {
+    const isUp = closes[i] >= opens[i];
+    const color = isUp ? '#4caf82' : '#cf5050';
+    const x = xOf(i);
+    // 高値/安値 ヒゲ
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x, yOf(highs[i]));
+    ctx.lineTo(x, yOf(lows[i]));
+    ctx.stroke();
+    // 実体
+    const top = yOf(Math.max(opens[i], closes[i]));
+    const bot = yOf(Math.min(opens[i], closes[i]));
+    const bh  = Math.max(bot - top, 1);
+    ctx.fillStyle = color;
+    ctx.fillRect(x - barW / 2, top, barW, bh);
+  }
+
+  // ── 移動平均線
+  drawLine(sma5,  '#ffcc44', 1.5);
+  drawLine(sma25, '#ff8844', 1.5);
+
+  // ── 日付ラベル（最初・中間・最後）
+  ctx.fillStyle = '#555';
+  ctx.font = `9px Courier New`;
+  ctx.textAlign = 'center';
+  const labelIdxs = [0, Math.floor(n / 2), n - 1];
+  labelIdxs.forEach(i => {
+    const d = dates[i].slice(5); // MM-DD
+    ctx.fillText(d, xOf(i), H - mB + 12);
+  });
+
+  // 凡例
+  const legend = document.getElementById('chartLegend');
+  if (legend) {
+    legend.innerHTML = `
+      <span style="color:#4caf82">● 陽線</span>
+      <span style="color:#cf5050">● 陰線</span>
+      <span style="color:#ffcc44">─ SMA5</span>
+      <span style="color:#ff8844">─ SMA25</span>
+      <span style="color:rgba(80,140,220,0.8)">▭ BB(20±2σ)</span>
+    `;
   }
 }
 
@@ -4824,5 +4995,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // メッセージ送信時の更新は、sendMessage関数内で直接呼び出すように変更
 </script>
+
+<!-- ===== Phase 4: チャートモーダル ===== -->
+<div id="chartModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.92); z-index:9999; overflow-y:auto; -webkit-overflow-scrolling:touch;">
+  <div style="max-width:600px; margin:0 auto; padding:12px;">
+    <!-- ヘッダー -->
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+      <span id="chartModalTitle" style="font-size:14px; color:#ff8866; font-family:'Courier New',monospace; font-weight:bold;"></span>
+      <button onclick="closeChartModal()" style="font-size:14px; padding:6px 14px; border:none; background:#333; color:#ccc; border-radius:6px; cursor:pointer; font-family:'Courier New',monospace;">✕ 閉じる</button>
+    </div>
+    <!-- チャートCanvas -->
+    <canvas id="stockChartCanvas" style="width:100%; border-radius:6px; background:#111; display:block;"></canvas>
+    <!-- 凡例 -->
+    <div id="chartLegend" style="display:flex; gap:12px; flex-wrap:wrap; margin-top:6px; font-size:10px; font-family:'Courier New',monospace; color:#aaa;"></div>
+    <!-- AI分析テキスト -->
+    <div id="chartAnalysisText" style="margin-top:12px; font-size:12px; color:#ccc; font-family:'Courier New',monospace; white-space:pre-wrap; background:#111; padding:12px; border-radius:6px; border:1px solid #2a2a2a; line-height:1.6;"></div>
+  </div>
+</div>
+
 </body>
 </html>
