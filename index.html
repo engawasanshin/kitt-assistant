@@ -2375,10 +2375,10 @@ async function handleTechnicalAnalysis(ticker) {
       `📈 ${name}（${ticker}） テクニカル分析`;
     openChartModal();
 
-    // Canvasが描画可能になるのを少し待ってから描画
-    setTimeout(() => {
+    // ブラウザのレイアウト完了を2フレーム待ってから描画（iPhone対応）
+    requestAnimationFrame(() => requestAnimationFrame(() => {
       drawStockChart(result.hist, ind);
-    }, 80);
+    }));
 
     // テキスト分析
     let msg = `期間: ${result.hist.dates[0]} 〜 ${result.hist.dates[result.hist.dates.length - 1]}\n`;
@@ -2436,7 +2436,11 @@ function drawStockChart(hist, indicators) {
 
   // Canvasサイズをデバイスピクセル比に合わせてHiDPI対応
   const dpr = window.devicePixelRatio || 1;
-  const displayW = canvas.parentElement.clientWidth - 24;
+  // clientWidthが0の場合（モーダル表示直後）はwindow.innerWidthで代替
+  const containerW = (canvas.parentElement && canvas.parentElement.clientWidth > 0)
+    ? canvas.parentElement.clientWidth
+    : Math.min(window.innerWidth, 600);
+  const displayW = Math.max(containerW - 24, 280);
   const displayH = Math.min(displayW * 0.65, 280);
   canvas.style.width  = displayW + 'px';
   canvas.style.height = displayH + 'px';
@@ -2458,12 +2462,12 @@ function drawStockChart(hist, indicators) {
     ...bb.map(b => b.upper).filter(v => v !== null),
     ...bb.map(b => b.lower).filter(v => v !== null)
   ];
-  const rawMin = Math.min(...allVals);
-  const rawMax = Math.max(...allVals);
-  const pad = (rawMax - rawMin) * 0.06;
+  const rawMin = Math.min(...allVals.filter(v => isFinite(v)));
+  const rawMax = Math.max(...allVals.filter(v => isFinite(v)));
+  const pad = Math.max((rawMax - rawMin) * 0.06, rawMax * 0.01);
   const minP = rawMin - pad;
   const maxP = rawMax + pad;
-  const range = maxP - minP;
+  const range = maxP - minP || 1; // ゼロ除算防止
 
   const xOf = (i) => mL + (i + 0.5) * (cW / n);
   const yOf = (p) => mT + cH - (p - minP) / range * cH;
