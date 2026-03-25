@@ -1964,7 +1964,10 @@ function displayWatchlist(watchlist) {
             <span style="font-weight: bold; color: #ff8866;">${item.name}</span>
             <span style="font-size: 11px; color: #888; margin-left: 6px;">${item.ticker}</span>
           </div>
-          <button onclick="handleRemoveFromWatchlist('${item.ticker}')" style="font-size: 10px; padding: 4px 8px; border: none; background: #333; color: #888; border-radius: 4px; cursor: pointer;">✕ 削除</button>
+          <div style="display: flex; gap: 4px;">
+            <button onclick="handleTechnicalAnalysis('${item.ticker}')" style="font-size: 10px; padding: 4px 8px; border: none; background: #1a5c1a; color: #88cc88; border-radius: 4px; cursor: pointer;">📈 分析</button>
+            <button onclick="handleRemoveFromWatchlist('${item.ticker}')" style="font-size: 10px; padding: 4px 8px; border: none; background: #333; color: #888; border-radius: 4px; cursor: pointer;">✕ 削除</button>
+          </div>
         </div>
         <div style="font-size: 11px; color: #aaa; margin-bottom: 4px;">
           セクター: ${item.sector || '未設定'} | 登録日: ${item.addedDate}
@@ -2175,6 +2178,224 @@ JSON形式で回答してください。
     analysis: analysis,
     analyzedAt: new Date().toISOString()
   };
+}
+
+// ===== Phase 3: テクニカル分析 =====
+
+// 過去株価データを取得・キャッシュ（24時間）
+async function fetchDailyHistory(ticker, months = 3) {
+  const cacheKey = 'kitt_historical_data';
+  const cache = JSON.parse(localStorage.getItem(cacheKey) || '{}');
+  const now = new Date();
+
+  if (cache[ticker] && cache[ticker].fetchedAt) {
+    const hoursSince = (now - new Date(cache[ticker].fetchedAt)) / (1000 * 60 * 60);
+    if (hoursSince < 24 && cache[ticker].months >= months) {
+      return cache[ticker];
+    }
+  }
+
+  const alphaKey = await loadAlphaVantageApiKey();
+  if (!alphaKey) throw new Error('Alpha Vantage APIキーが設定されていません（Settingsから設定してください）');
+
+  const url = `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=${ticker}&outputsize=compact&apikey=${alphaKey}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Alpha Vantage API Error: ${res.status}`);
+
+  const data = await res.json();
+  if (data['Note']) throw new Error('Alpha Vantage API制限に到達しました（5リクエスト/分、500リクエスト/日）');
+  if (data['Error Message']) throw new Error(data['Error Message']);
+
+  const timeSeries = data['Time Series (Daily)'];
+  if (!timeSeries) throw new Error(`${ticker}のデータが取得できませんでした`);
+
+  // compact = 直近100件。months分だけ切り出す（1ヶ月≈21営業日）
+  const targetDays = Math.min(months * 22, 100);
+  const dates = Object.keys(timeSeries).sort().slice(-targetDays);
+
+  const historicalData = {
+    ticker,
+    dates,
+    closes:  dates.map(d => parseFloat(timeSeries[d]['4. close'])),
+    highs:   dates.map(d => parseFloat(timeSeries[d]['2. high'])),
+    lows:    dates.map(d => parseFloat(timeSeries[d]['3. low'])),
+    opens:   dates.map(d => parseFloat(timeSeries[d]['1. open'])),
+    volumes: dates.map(d => parseInt(timeSeries[d]['5. volume'])),
+    fetchedAt: now.toISOString(),
+    months
+  };
+
+  cache[ticker] = historicalData;
+  localStorage.setItem(cacheKey, JSON.stringify(cache));
+  return historicalData;
+}
+
+// 単純移動平均（SMA）
+function calcSMA(prices, period) {
+  return prices.map((_, i) => {
+    if (i < period - 1) return null;
+    const slice = prices.slice(i - period + 1, i + 1);
+    return slice.reduce((a, b) => a + b, 0) / period;
+  });
+}
+
+// ボリンジャーバンド（SMA ± N×標準偏差）
+function calcBollingerBands(prices, period = 20, multiplier = 2) {
+  const sma = calcSMA(prices, period);
+  return prices.map((_, i) => {
+    if (sma[i] === null) return { upper: null, middle: null, lower: null };
+    const slice = prices.slice(i - period + 1, i + 1);
+    const variance = slice.reduce((sum, p) => sum + Math.pow(p - sma[i], 2), 0) / period;
+    const std = Math.sqrt(variance);
+    return { upper: sma[i] + multiplier * std, middle: sma[i], lower: sma[i] - multiplier * std };
+  });
+}
+
+// テクニカル指標計算 → Gemini分析
+async function analyzeTechnicalIndicators(ticker, months = 3) {
+  if (!apiKey) throw new Error('Gemini APIキーが設定されていません');
+
+  addSystemMessage(`📡 ${ticker}の過去${months}ヶ月データを取得中...`);
+  await new Promise(r => setTimeout(r, 300));
+
+  const hist = await fetchDailyHistory(ticker, months);
+  const closes = hist.closes;
+  const n = closes.length;
+
+  if (n < 25) throw new Error(`データが不足しています（${n}件）。日本株は取引量が少なくAlpha Vantageで取得できない場合があります。`);
+
+  const sma5  = calcSMA(closes, 5);
+  const sma25 = calcSMA(closes, 25);
+  const bb20  = calcBollingerBands(closes, 20, 2);
+
+  const latest     = closes[n - 1];
+  const latestSma5 = sma5[n - 1];
+  const latestSma25 = sma25[n - 1];
+  const latestBB   = bb20[n - 1];
+
+  // ゴールデン/デッドクロス検出（直近10日）
+  let crossSignal = 'なし';
+  for (let i = Math.max(1, n - 10); i < n; i++) {
+    if (sma5[i] !== null && sma25[i] !== null && sma5[i-1] !== null && sma25[i-1] !== null) {
+      if (sma5[i-1] < sma25[i-1] && sma5[i] >= sma25[i]) {
+        crossSignal = `ゴールデンクロス（${hist.dates[i]}）`; break;
+      }
+      if (sma5[i-1] > sma25[i-1] && sma5[i] <= sma25[i]) {
+        crossSignal = `デッドクロス（${hist.dates[i]}）`; break;
+      }
+    }
+  }
+
+  const recent = 30;
+  const r = (arr) => arr.slice(-recent).map(v => v === null ? 'null' : (Math.round(v * 10) / 10).toString());
+
+  const prompt = `
+あなたは株式テクニカル分析の教育支援AIです。以下のデータを分析し、初心者向けに解説してください。
+
+【銘柄】${ticker}（${hist.dates[0]} 〜 ${hist.dates[n-1]}、${n}営業日）
+【分析期間】約${months}ヶ月
+
+【直近${recent}日間の終値】
+${r(closes).join(', ')}
+
+【最新テクニカル指標】
+- 現在株価: ${latest.toFixed(1)}
+- 5日移動平均: ${latestSma5?.toFixed(1) ?? 'N/A'}
+- 25日移動平均: ${latestSma25?.toFixed(1) ?? 'N/A'}
+- ボリンジャーバンド(20日/±2σ): 上限 ${latestBB.upper?.toFixed(1) ?? 'N/A'} / 中央 ${latestBB.middle?.toFixed(1) ?? 'N/A'} / 下限 ${latestBB.lower?.toFixed(1) ?? 'N/A'}
+- 直近クロスシグナル: ${crossSignal}
+
+【5日SMA（直近${recent}日）】
+${r(sma5).join(', ')}
+
+【ボリンジャー上限/下限（直近${recent}日）】
+上: ${r(bb20.map(b => b.upper)).join(', ')}
+下: ${r(bb20.map(b => b.lower)).join(', ')}
+
+以下のJSON形式で回答してください。断定的な売買推奨は絶対に避け、教育的・参考情報として回答してください。
+`;
+
+  const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+  const body = {
+    contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    generationConfig: {
+      temperature: 0.3,
+      maxOutputTokens: 2048,
+      responseMimeType: 'application/json',
+      responseSchema: {
+        type: 'object',
+        properties: {
+          trend:           { type: 'string' },
+          trendReason:     { type: 'string' },
+          bbPosition:      { type: 'string' },
+          crossSignalNote: { type: 'string' },
+          watchPoints:     { type: 'array', items: { type: 'string' } },
+          learningNote:    { type: 'string' },
+          disclaimer:      { type: 'string' }
+        },
+        required: ['trend', 'trendReason', 'bbPosition', 'watchPoints', 'learningNote', 'disclaimer']
+      }
+    }
+  };
+
+  const res = await fetchWithRetry(geminiUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+    body: JSON.stringify(body)
+  });
+
+  const data = res._parsedData || await res.json();
+  const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+  const analysis = JSON.parse(rawText);
+
+  // 分析履歴を保存
+  const history = JSON.parse(localStorage.getItem('kitt_technical_analysis_history') || '[]');
+  history.unshift({ ticker, trend: analysis.trend, months, analyzedAt: new Date().toISOString() });
+  if (history.length > 50) history.length = 50;
+  localStorage.setItem('kitt_technical_analysis_history', JSON.stringify(history));
+
+  return { ticker, hist, indicators: { latest, latestSma5, latestSma25, latestBB, crossSignal }, analysis, analyzedAt: new Date().toISOString() };
+}
+
+// ウォッチリストの銘柄をテクニカル分析するハンドラー
+async function handleTechnicalAnalysis(ticker) {
+  try {
+    const watchlist = getWatchlist();
+    const stock = watchlist.find(s => s.ticker === ticker);
+    const name = stock ? stock.name : ticker;
+
+    addSystemMessage(`📈 ${name}（${ticker}）のテクニカル分析を開始します...`);
+
+    const result = await analyzeTechnicalIndicators(ticker);
+    const a = result.analysis;
+    const ind = result.indicators;
+
+    let msg = `📈 テクニカル分析: ${name}（${ticker}）\n`;
+    msg += `期間: ${result.hist.dates[0]} 〜 ${result.hist.dates[result.hist.dates.length - 1]}\n`;
+    msg += `━━━━━━━━━━━━━━━━━━━\n`;
+    msg += `【現在価格】¥${ind.latest.toFixed(1)}\n`;
+    msg += `　5日MA: ¥${ind.latestSma5?.toFixed(1) ?? 'N/A'} / 25日MA: ¥${ind.latestSma25?.toFixed(1) ?? 'N/A'}\n`;
+    msg += `　BB上限: ¥${ind.latestBB.upper?.toFixed(1) ?? 'N/A'} / BB下限: ¥${ind.latestBB.lower?.toFixed(1) ?? 'N/A'}\n\n`;
+    msg += `【トレンド判定】${a.trend}\n${a.trendReason}\n\n`;
+    msg += `【ボリンジャーバンド】\n${a.bbPosition}\n\n`;
+    if (a.crossSignalNote && ind.crossSignal !== 'なし') {
+      msg += `【クロスシグナル】${ind.crossSignal}\n${a.crossSignalNote}\n\n`;
+    }
+    msg += `【注目ポイント】\n${(a.watchPoints || []).map((p, i) => `${i + 1}. ${p}`).join('\n')}\n\n`;
+    msg += `【学習ポイント】\n${a.learningNote}\n\n`;
+    msg += `⚠️ ${a.disclaimer}`;
+
+    addSystemMessage(msg);
+  } catch (err) {
+    if (err.message.includes('APIキーが設定されていません')) {
+      addSystemMessage(`❌ ${err.message}`);
+      setTimeout(openSettings, 1000);
+    } else if (err.message.includes('API制限')) {
+      addSystemMessage(`⚠️ ${err.message}\n少し時間をおいて再度お試しください。`);
+    } else {
+      addSystemMessage(`❌ テクニカル分析エラー: ${err.message}`);
+    }
+  }
 }
 
 // --- Phase 1.5: Analyze & Save ---
@@ -3910,6 +4131,36 @@ function analyzeAndRecord(text) {
         }
       }
     }, 100);
+  }
+
+  // === テクニカル分析コマンド ===
+  if (lowerText.includes('テクニカル') || lowerText.includes('移動平均') ||
+      lowerText.includes('ボリンジャー') || lowerText.includes('チャート分析') ||
+      lowerText.includes('シグナル') && (lowerText.includes('株') || lowerText.includes('銘柄'))) {
+
+    const watchlist = getWatchlist();
+    if (watchlist.length === 0) {
+      addSystemMessage('⚠️ ウォッチリストが空です。まず銘柄をウォッチリストに追加してください。');
+      return;
+    }
+
+    // 銘柄名やティッカーが含まれているか確認
+    let targetStock = null;
+    for (const stock of watchlist) {
+      if (lowerText.includes(stock.name.toLowerCase()) || lowerText.includes(stock.ticker.toLowerCase())) {
+        targetStock = stock;
+        break;
+      }
+    }
+
+    if (!targetStock && watchlist.length === 1) {
+      targetStock = watchlist[0];
+    } else if (!targetStock) {
+      addSystemMessage(`📈 どの銘柄のテクニカル分析を行いますか？\n${watchlist.map(s => `- ${s.name} (${s.ticker})`).join('\n')}`);
+      return;
+    }
+
+    setTimeout(() => { handleTechnicalAnalysis(targetStock.ticker); }, 100);
   }
 
   // 位置登録コマンド（会社・家の設定）
