@@ -4747,7 +4747,10 @@ function updateDashboard() {
     // === 投資・株関連のキーワード検出 ===
     if (text.includes('投資') || text.includes('株') || text.includes('銘柄') ||
         text.includes('トレード') || text.includes('配当') || text.includes('ウォッチ') ||
-        text.includes('監視') || text.includes('買い時') || text.includes('購入タイミング')) {
+        text.includes('監視') || text.includes('買い時') || text.includes('購入タイミング') ||
+        text.includes('テクニカル') || text.includes('グラフ') || text.includes('チャート') ||
+        text.includes('移動平均') || text.includes('ボリンジャー') || text.includes('inpex') ||
+        text.includes('トヨタ') || text.includes('ディスコ') || text.includes('screen')) {
       const watchlist = getWatchlist();
       const candidates = getInvestmentCandidates();
       const history = JSON.parse(localStorage.getItem('kitt_investment_analysis_history') || '[]');
