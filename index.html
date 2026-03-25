@@ -4308,10 +4308,11 @@ function analyzeAndRecord(text) {
     }, 100);
   }
 
-  // === テクニカル分析コマンド ===
+  // === テクニカル分析・グラフ描画コマンド ===
   if (lowerText.includes('テクニカル') || lowerText.includes('移動平均') ||
       lowerText.includes('ボリンジャー') || lowerText.includes('チャート分析') ||
-      lowerText.includes('シグナル') && (lowerText.includes('株') || lowerText.includes('銘柄'))) {
+      lowerText.includes('グラフ') ||
+      (lowerText.includes('シグナル') && (lowerText.includes('株') || lowerText.includes('銘柄')))) {
 
     const watchlist = getWatchlist();
     if (watchlist.length === 0) {
