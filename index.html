@@ -516,7 +516,10 @@ body {
   <div class="header-left">
     <button class="status-btn" onclick="openStatusBoard()" title="ステータスボード">&#128202;</button>
     <button class="status-btn" onclick="refreshMemory()" title="記憶を更新" id="refreshMemoryBtn">&#128259;</button>
-    <div class="api-counter" onclick="openStatusBoard()" title="API使用状況"><span class="api-dot" id="apiDot"></span><span id="apiCounterText">--</span></div>
+    <div style="display:flex;flex-direction:column;gap:1px;">
+      <div class="api-counter" onclick="openStatusBoard()" title="Gemini API使用状況"><span class="api-dot" id="apiDot"></span><span id="apiCounterText">--</span></div>
+      <div class="api-counter" onclick="openStatusBoard()" title="Alpha Vantage使用状況（本日）"><span class="api-dot" id="avDot"></span><span id="avCounterText">AV: --</span></div>
+    </div>
   </div>
   <div style="display: flex; flex-direction: column; align-items: center;">
     <h1>K.I.T.T.</h1>
@@ -936,6 +939,64 @@ function updateApiCounterUI() {
   }
 }
 
+// --- Alpha Vantage 使用量管理 ---
+
+const AV_DAILY_LIMIT = 500;
+
+function getAvUsage() {
+  const today = getToday();
+  const data = JSON.parse(localStorage.getItem('kitt_av_usage') || '{}');
+  if (data.date !== today) return { date: today, count: 0 };
+  return data;
+}
+
+function recordAvCall() {
+  const usage = getAvUsage();
+  usage.count = (usage.count || 0) + 1;
+  localStorage.setItem('kitt_av_usage', JSON.stringify(usage));
+  updateAvCounterUI();
+}
+
+function updateAvCounterUI() {
+  const usage = getAvUsage();
+  const el = document.getElementById('avCounterText');
+  const dot = document.getElementById('avDot');
+  if (!el) return;
+  el.textContent = `AV: ${usage.count}/${AV_DAILY_LIMIT}`;
+  if (dot) {
+    dot.className = 'api-dot' + (usage.count >= 480 ? ' danger' : usage.count >= 400 ? ' warn' : '');
+  }
+}
+
+// Alpha Vantage 確認ダイアログ（Promise）
+function showAvConfirm(ticker, cacheDate, remaining) {
+  return new Promise(resolve => {
+    const existing = document.getElementById('avConfirmDialog');
+    if (existing) existing.remove();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'avConfirmDialog';
+    overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.85);z-index:10000;display:flex;align-items:center;justify-content:center;padding:20px;';
+
+    const dialog = document.createElement('div');
+    dialog.style.cssText = 'background:#111;border:1px solid #2a4a2a;border-radius:8px;padding:20px;max-width:300px;width:100%;font-family:"Courier New",monospace;';
+    dialog.innerHTML = `
+      <div style="color:#88cc88;font-size:11px;letter-spacing:2px;margin-bottom:12px;">[ ALPHA VANTAGE ]</div>
+      <p style="font-size:13px;color:#ccc;margin-bottom:8px;line-height:1.5;">${ticker} のデータは ${cacheDate} に取得済みです。</p>
+      <p style="font-size:12px;color:#888;margin-bottom:16px;">本日の最新データを取得しますか？<br><span style="color:#88cc88;">残り: ${remaining}/${AV_DAILY_LIMIT}回</span></p>
+      <div style="display:flex;gap:8px;justify-content:flex-end;">
+        <button id="avConfirmNo" style="padding:8px 16px;background:#1a1a1a;border:1px solid #333;color:#888;border-radius:4px;font-size:12px;cursor:pointer;">キャッシュを使用</button>
+        <button id="avConfirmYes" style="padding:8px 16px;background:#1a3a1a;border:1px solid #2a6a2a;color:#88cc88;border-radius:4px;font-size:12px;cursor:pointer;">新規取得</button>
+      </div>
+    `;
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+
+    document.getElementById('avConfirmYes').onclick = () => { overlay.remove(); resolve(true); };
+    document.getElementById('avConfirmNo').onclick  = () => { overlay.remove(); resolve(false); };
+  });
+}
+
 // --- K.I.T.T. Memory System ---
 // 改良版C案: 3層の記憶構造（Vercel Functions経由でセキュアアクセス）
 const MEMORY_MD_URL = 'https://kitt-assistant.vercel.app/api/memory';
@@ -1153,6 +1214,7 @@ function checkExportPrompt() {
 // --- Init ---
 window.addEventListener('load', async () => {
   updateApiCounterUI();
+  updateAvCounterUI();
   await Promise.all([loadStatusContext(), loadKittMemory()]);
   if (!apiKey) {
     openSettings();
@@ -2182,52 +2244,82 @@ JSON形式で回答してください。
 
 // ===== Phase 3: テクニカル分析 =====
 
-// 過去株価データを取得・キャッシュ（24時間）
+// 過去株価データを取得・キャッシュ（同日再取得確認・重複リクエスト防止付き）
+const _avPendingFetches = {};
+
 async function fetchDailyHistory(ticker, months = 3) {
   const cacheKey = 'kitt_historical_data';
   const cache = JSON.parse(localStorage.getItem(cacheKey) || '{}');
-  const now = new Date();
+  const today = getToday();
 
+  // 当日取得済みキャッシュがあれば即時返す（API呼び出し不要）
   if (cache[ticker] && cache[ticker].fetchedAt) {
-    const hoursSince = (now - new Date(cache[ticker].fetchedAt)) / (1000 * 60 * 60);
-    if (hoursSince < 24 && cache[ticker].months >= months) {
+    const cacheDate = cache[ticker].fetchedAt.split('T')[0];
+    if (cacheDate === today && cache[ticker].months >= months) {
       return cache[ticker];
+    }
+  }
+
+  // 既にフェッチ中なら同じPromiseを待つ（重複リクエスト防止）
+  if (_avPendingFetches[ticker]) {
+    return await _avPendingFetches[ticker];
+  }
+
+  // 前日以前のキャッシュがある場合は確認ダイアログ
+  if (cache[ticker] && cache[ticker].fetchedAt) {
+    const cacheDate = cache[ticker].fetchedAt.split('T')[0];
+    const avUsage = getAvUsage();
+    const remaining = AV_DAILY_LIMIT - avUsage.count;
+    const confirmed = await showAvConfirm(ticker, cacheDate, remaining);
+    if (!confirmed) {
+      return cache[ticker]; // 前回のキャッシュをそのまま使用
     }
   }
 
   const alphaKey = await loadAlphaVantageApiKey();
   if (!alphaKey) throw new Error('Alpha Vantage APIキーが設定されていません（Settingsから設定してください）');
 
-  const url = `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=${ticker}&outputsize=compact&apikey=${alphaKey}`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Alpha Vantage API Error: ${res.status}`);
+  // フェッチ実行（並列リクエスト防止マップに登録）
+  const fetchPromise = (async () => {
+    try {
+      const url = `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=${ticker}&outputsize=compact&apikey=${alphaKey}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`Alpha Vantage API Error: ${res.status}`);
 
-  const data = await res.json();
-  if (data['Note']) throw new Error('Alpha Vantage API制限に到達しました（5リクエスト/分、500リクエスト/日）');
-  if (data['Error Message']) throw new Error(data['Error Message']);
+      const data = await res.json();
+      if (data['Note'] || data['Information']) throw new Error('Alpha Vantage API制限に到達しました（5リクエスト/分、500リクエスト/日）');
+      if (data['Error Message']) throw new Error(data['Error Message']);
 
-  const timeSeries = data['Time Series (Daily)'];
-  if (!timeSeries) throw new Error(`${ticker}のデータが取得できませんでした`);
+      const timeSeries = data['Time Series (Daily)'];
+      if (!timeSeries) throw new Error(`${ticker}のデータが取得できませんでした`);
 
-  // compact = 直近100件。months分だけ切り出す（1ヶ月≈21営業日）
-  const targetDays = Math.min(months * 22, 100);
-  const dates = Object.keys(timeSeries).sort().slice(-targetDays);
+      // compact = 直近100件。months分だけ切り出す（1ヶ月≈21営業日）
+      const targetDays = Math.min(months * 22, 100);
+      const dates = Object.keys(timeSeries).sort().slice(-targetDays);
 
-  const historicalData = {
-    ticker,
-    dates,
-    closes:  dates.map(d => parseFloat(timeSeries[d]['4. close'])),
-    highs:   dates.map(d => parseFloat(timeSeries[d]['2. high'])),
-    lows:    dates.map(d => parseFloat(timeSeries[d]['3. low'])),
-    opens:   dates.map(d => parseFloat(timeSeries[d]['1. open'])),
-    volumes: dates.map(d => parseInt(timeSeries[d]['5. volume'])),
-    fetchedAt: now.toISOString(),
-    months
-  };
+      const historicalData = {
+        ticker,
+        dates,
+        closes:  dates.map(d => parseFloat(timeSeries[d]['4. close'])),
+        highs:   dates.map(d => parseFloat(timeSeries[d]['2. high'])),
+        lows:    dates.map(d => parseFloat(timeSeries[d]['3. low'])),
+        opens:   dates.map(d => parseFloat(timeSeries[d]['1. open'])),
+        volumes: dates.map(d => parseInt(timeSeries[d]['5. volume'])),
+        fetchedAt: new Date().toISOString(),
+        months
+      };
 
-  cache[ticker] = historicalData;
-  localStorage.setItem(cacheKey, JSON.stringify(cache));
-  return historicalData;
+      cache[ticker] = historicalData;
+      localStorage.setItem(cacheKey, JSON.stringify(cache));
+      recordAvCall(); // APIコール回数を記録
+      return historicalData;
+    } finally {
+      delete _avPendingFetches[ticker]; // フェッチ完了後に削除
+    }
+  })();
+
+  _avPendingFetches[ticker] = fetchPromise;
+  return await fetchPromise;
 }
 
 // 単純移動平均（SMA）
