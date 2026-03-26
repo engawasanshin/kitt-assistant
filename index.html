@@ -1273,6 +1273,21 @@ function addSystemMessage(text) {
   chatArea.scrollTop = chatArea.scrollHeight;
 }
 
+// ボタン付きシステムメッセージ（チャート表示リンクなど）
+function addSystemMessageWithButton(text, buttonLabel, buttonFn) {
+  const chatArea = document.getElementById('chatArea');
+  const div = document.createElement('div');
+  div.className = 'message system';
+  div.textContent = text;
+  const btn = document.createElement('button');
+  btn.textContent = buttonLabel;
+  btn.style.cssText = 'display:block;margin-top:8px;padding:7px 16px;background:#1a3a1a;border:1px solid #2a6a2a;color:#88cc88;border-radius:4px;font-size:12px;cursor:pointer;font-family:"Courier New",monospace;width:100%;text-align:left;';
+  btn.onclick = buttonFn;
+  div.appendChild(btn);
+  chatArea.appendChild(div);
+  chatArea.scrollTop = chatArea.scrollHeight;
+}
+
 function restoreHistory() {
   chatHistory.forEach(msg => {
     if (msg.role === 'user') addMessage('user', msg.text);
@@ -2470,9 +2485,12 @@ async function handleTechnicalAnalysis(ticker) {
     const a = result.analysis;
     const ind = result.indicators;
 
+    // チャートデータを保存（再表示用）
+    const chartTitle = `📈 ${name}（${ticker}） テクニカル分析`;
+    _lastChartState = { hist: result.hist, indicators: ind, title: chartTitle };
+
     // チャートモーダルを表示
-    document.getElementById('chartModalTitle').textContent =
-      `📈 ${name}（${ticker}） テクニカル分析`;
+    document.getElementById('chartModalTitle').textContent = chartTitle;
     openChartModal();
 
     // ブラウザのレイアウト完了を2フレーム待ってから描画（iPhone対応）
@@ -2497,8 +2515,9 @@ async function handleTechnicalAnalysis(ticker) {
 
     document.getElementById('chartAnalysisText').textContent = msg;
 
-    // チャットにも簡易サマリーを表示
-    addSystemMessage(`📈 ${name} テクニカル分析完了 → チャートを表示中\nトレンド: ${a.trend}\n${ind.crossSignal !== 'なし' ? 'シグナル: ' + ind.crossSignal + '\n' : ''}チャートモーダルで詳細を確認してください。`);
+    // チャットにボタン付きサマリーを表示（チャートが閉じても再表示できる）
+    const summaryText = `📈 ${name} テクニカル分析完了\nトレンド: ${a.trend}\n${ind.crossSignal !== 'なし' ? 'シグナル: ' + ind.crossSignal + '\n' : ''}チャートが表示されない場合は下のボタンをタップ:`;
+    addSystemMessageWithButton(summaryText, '📈 チャートを開く', reopenLastChart);
 
   } catch (err) {
     if (err.message.includes('APIキーが設定されていません')) {
@@ -2513,6 +2532,21 @@ async function handleTechnicalAnalysis(ticker) {
 }
 
 // ===== Phase 4: チャート描画 =====
+
+// 最後のチャートデータを保存（再表示用）
+let _lastChartState = null;
+
+function reopenLastChart() {
+  if (!_lastChartState) {
+    addSystemMessage('チャートデータがありません。分析を実行してください。');
+    return;
+  }
+  document.getElementById('chartModalTitle').textContent = _lastChartState.title;
+  openChartModal();
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    drawStockChart(_lastChartState.hist, _lastChartState.indicators);
+  }));
+}
 
 function openChartModal() {
   document.getElementById('chartModal').style.display = 'block';
@@ -2536,11 +2570,12 @@ function drawStockChart(hist, indicators) {
 
   // Canvasサイズをデバイスピクセル比に合わせてHiDPI対応
   const dpr = window.devicePixelRatio || 1;
-  // clientWidthが0の場合（モーダル表示直後）はwindow.innerWidthで代替
-  const containerW = (canvas.parentElement && canvas.parentElement.clientWidth > 0)
-    ? canvas.parentElement.clientWidth
+  // getBoundingClientRect → clientWidth → window.innerWidth の順でフォールバック
+  const rect = canvas.parentElement ? canvas.parentElement.getBoundingClientRect() : null;
+  const rawW = (rect && rect.width > 0) ? rect.width
+    : (canvas.parentElement && canvas.parentElement.clientWidth > 0) ? canvas.parentElement.clientWidth
     : Math.min(window.innerWidth, 600);
-  const displayW = Math.max(containerW - 24, 280);
+  const displayW = Math.max(rawW - 24, 280);
   const displayH = Math.min(displayW * 0.65, 280);
   canvas.style.width  = displayW + 'px';
   canvas.style.height = displayH + 'px';
