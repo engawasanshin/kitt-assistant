@@ -2033,53 +2033,53 @@ function displayWatchlist(watchlist) {
     最終更新: ${lastUpdateStr}
   `;
 
-  // ウォッチリスト一覧表示
+  // ウォッチリスト一覧表示（null安全）
+  const fmt = (v) => (v != null && isFinite(v)) ? parseFloat(v).toFixed(2) : '--';
   let html = '';
-  watchlist.forEach((item) => {
-    const changeColor = item.change >= 0 ? '#88cc88' : '#cc8888';
-    const changeSign = item.change >= 0 ? '+' : '';
-    const lastUpdateDate = new Date(item.lastUpdated).toLocaleString('ja-JP', {
-      month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
-    });
+  try {
+    watchlist.forEach((item) => {
+      const change = item.change != null ? parseFloat(item.change) : 0;
+      const changeColor = change >= 0 ? '#88cc88' : '#cc8888';
+      const changeSign = change >= 0 ? '+' : '';
+      const lastUpdateDate = item.lastUpdated
+        ? new Date(item.lastUpdated).toLocaleString('ja-JP', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+        : '未更新';
 
-    html += `
-      <div style="border: 1px solid #2a2a2a; border-radius: 6px; padding: 8px; margin-bottom: 6px; background: #1a1a1a;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-          <div>
-            <span style="font-weight: bold; color: #ff8866;">${item.name}</span>
-            <span style="font-size: 11px; color: #888; margin-left: 6px;">${item.ticker}</span>
+      html += `
+        <div style="border: 1px solid #2a2a2a; border-radius: 6px; padding: 8px; margin-bottom: 6px; background: #1a1a1a;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+            <div>
+              <span style="font-weight: bold; color: #ff8866;">${item.name || item.ticker}</span>
+              <span style="font-size: 11px; color: #888; margin-left: 6px;">${item.ticker}</span>
+            </div>
+            <div style="display: flex; gap: 4px;">
+              <button onclick="handleTechnicalAnalysis('${item.ticker}')" style="font-size: 10px; padding: 4px 8px; border: none; background: #1a5c1a; color: #88cc88; border-radius: 4px; cursor: pointer;">📈 分析</button>
+              <button onclick="handleRemoveFromWatchlist('${item.ticker}')" style="font-size: 10px; padding: 4px 8px; border: none; background: #333; color: #888; border-radius: 4px; cursor: pointer;">✕ 削除</button>
+            </div>
           </div>
-          <div style="display: flex; gap: 4px;">
-            <button onclick="handleTechnicalAnalysis('${item.ticker}')" style="font-size: 10px; padding: 4px 8px; border: none; background: #1a5c1a; color: #88cc88; border-radius: 4px; cursor: pointer;">📈 分析</button>
-            <button onclick="handleRemoveFromWatchlist('${item.ticker}')" style="font-size: 10px; padding: 4px 8px; border: none; background: #333; color: #888; border-radius: 4px; cursor: pointer;">✕ 削除</button>
+          <div style="font-size: 11px; color: #aaa; margin-bottom: 4px;">
+            セクター: ${item.sector || '未設定'} | 登録日: ${item.addedDate || '不明'}
           </div>
+          <div style="font-size: 11px; color: #bbb; margin-bottom: 4px; font-style: italic;">
+            理由: ${item.addedReason || ''}
+          </div>
+          <div style="display: flex; justify-content: space-between; font-size: 11px;">
+            <div>現在価格: <span style="font-weight: bold; color: #fff;">¥${fmt(item.currentPrice)}</span></div>
+            <div>登録時: <span style="color: #aaa;">¥${fmt(item.addedPrice)}</span></div>
+          </div>
+          <div style="display: flex; justify-content: space-between; font-size: 11px; margin-top: 4px;">
+            <div style="color: ${changeColor}; font-weight: bold;">
+              損益: ${changeSign}¥${fmt(change)} (${changeSign}${item.changePercent ?? '--'}%)
+            </div>
+            <div style="color: #888;">${lastUpdateDate}更新</div>
+          </div>
+          ${item.newsCount > 0 ? `<div style="font-size: 10px; color: #ff8866; margin-top: 4px;">📰 ニュース ${item.newsCount}件</div>` : ''}
         </div>
-        <div style="font-size: 11px; color: #aaa; margin-bottom: 4px;">
-          セクター: ${item.sector || '未設定'} | 登録日: ${item.addedDate}
-        </div>
-        <div style="font-size: 11px; color: #bbb; margin-bottom: 4px; font-style: italic;">
-          理由: ${item.addedReason}
-        </div>
-        <div style="display: flex; justify-content: space-between; font-size: 11px;">
-          <div>
-            現在価格: <span style="font-weight: bold; color: #fff;">¥${item.currentPrice.toFixed(2)}</span>
-          </div>
-          <div>
-            登録時: <span style="color: #aaa;">¥${item.addedPrice.toFixed(2)}</span>
-          </div>
-        </div>
-        <div style="display: flex; justify-content: space-between; font-size: 11px; margin-top: 4px;">
-          <div style="color: ${changeColor}; font-weight: bold;">
-            損益: ${changeSign}¥${item.change.toFixed(2)} (${changeSign}${item.changePercent}%)
-          </div>
-          <div style="color: #888;">
-            ${lastUpdateDate}更新
-          </div>
-        </div>
-        ${item.newsCount > 0 ? `<div style="font-size: 10px; color: #ff8866; margin-top: 4px;">📰 ニュース ${item.newsCount}件</div>` : ''}
-      </div>
-    `;
-  });
+      `;
+    });
+  } catch (e) {
+    html += `<div style="color:#cc4444;font-size:12px;">表示エラー: ${e.message}</div>`;
+  }
 
   contentEl.innerHTML = html;
   container.style.display = 'block';
@@ -4580,6 +4580,27 @@ function analyzeAndRecord(text) {
     })();
   }
 
+  // ウォッチリスト診断コマンド（「ウォッチリスト確認」「ウォッチリスト状態」）
+  if ((lowerText.includes('ウォッチリスト') || lowerText.includes('ウォッチ')) &&
+      (lowerText.includes('確認') || lowerText.includes('状態') || lowerText.includes('見せて') || lowerText.includes('表示'))) {
+    const wl = getWatchlist();
+    if (wl.length === 0) {
+      addSystemMessage('📋 ウォッチリストは空です。\n「株の銘柄を探して」と話しかけると候補銘柄を提案します。候補の「➕ウォッチ」ボタンでリストに追加できます。');
+    } else {
+      let msg = `📋 ウォッチリスト: ${wl.length}件\n\n`;
+      wl.forEach(item => {
+        const price = (item.currentPrice != null && isFinite(item.currentPrice))
+          ? `¥${parseFloat(item.currentPrice).toFixed(0)}`
+          : '価格未取得';
+        msg += `・${item.name}（${item.ticker}）${price}\n`;
+      });
+      msg += '\n上のダッシュボードの「📈 分析」ボタンでテクニカル分析できます。';
+      addSystemMessage(msg);
+      updateDashboard(); // ウォッチリストを再描画
+    }
+    return;
+  }
+
   // 飲み会確認コマンド（未確認の候補を表示）
   if (lowerText.includes('飲み会確認') || lowerText.includes('飲み会チェック')) {
     const pending = getPendingDrinkingConfirmations();
@@ -5139,10 +5160,14 @@ function updateDashboard() {
   if (greetingEl) greetingEl.textContent = greeting;
   if (commentEl) commentEl.textContent = comment;
 
-  // ウォッチリストはキーワードに関係なく常に表示（データがある場合）
+  // ウォッチリストはキーワードに関係なく常に表示
   const _wl = getWatchlist();
   if (_wl.length > 0) {
     displayWatchlist(_wl);
+  } else {
+    // データがない場合は非表示（エリアだけリセット）
+    const _wa = document.getElementById('watchlistArea');
+    if (_wa) _wa.style.display = 'none';
   }
 }
 
