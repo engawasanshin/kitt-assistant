@@ -2489,14 +2489,10 @@ async function handleTechnicalAnalysis(ticker) {
     const chartTitle = `📈 ${name}（${ticker}） テクニカル分析`;
     _lastChartState = { hist: result.hist, indicators: ind, title: chartTitle };
 
-    // チャートモーダルを表示
+    // チャートモーダルを表示 → 3段階フォールバックで描画
     document.getElementById('chartModalTitle').textContent = chartTitle;
     openChartModal();
-
-    // ブラウザのレイアウト完了を2フレーム待ってから描画（iPhone対応）
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      drawStockChart(result.hist, ind);
-    }));
+    _scheduleChartDraw(result.hist, ind);
 
     // テキスト分析
     let msg = `期間: ${result.hist.dates[0]} 〜 ${result.hist.dates[result.hist.dates.length - 1]}\n`;
@@ -2543,9 +2539,19 @@ function reopenLastChart() {
   }
   document.getElementById('chartModalTitle').textContent = _lastChartState.title;
   openChartModal();
+  _scheduleChartDraw(_lastChartState.hist, _lastChartState.indicators);
+}
+
+// チャート描画スケジューラー（3段階フォールバック）
+function _scheduleChartDraw(hist, indicators) {
+  // rAF×2 で描画（レイアウト完了待ち）
   requestAnimationFrame(() => requestAnimationFrame(() => {
-    drawStockChart(_lastChartState.hist, _lastChartState.indicators);
+    drawStockChart(hist, indicators);
   }));
+  // 200ms後にも再描画（rAF×2が間に合わない場合のフォールバック）
+  setTimeout(() => drawStockChart(hist, indicators), 200);
+  // 600ms後にも再描画（低速デバイス向け最終フォールバック）
+  setTimeout(() => drawStockChart(hist, indicators), 600);
 }
 
 function openChartModal() {
@@ -2568,14 +2574,10 @@ function drawStockChart(hist, indicators) {
   const sma25 = calcSMA(closes, 25);
   const bb    = calcBollingerBands(closes, 20, 2);
 
-  // Canvasサイズをデバイスピクセル比に合わせてHiDPI対応
+  // Canvasサイズ: window.innerWidthを主軸に（DOM依存を排除、iPhone対応）
   const dpr = window.devicePixelRatio || 1;
-  // getBoundingClientRect → clientWidth → window.innerWidth の順でフォールバック
-  const rect = canvas.parentElement ? canvas.parentElement.getBoundingClientRect() : null;
-  const rawW = (rect && rect.width > 0) ? rect.width
-    : (canvas.parentElement && canvas.parentElement.clientWidth > 0) ? canvas.parentElement.clientWidth
-    : Math.min(window.innerWidth, 600);
-  const displayW = Math.max(rawW - 24, 280);
+  // モーダルのpadding(16px×2)とキャンバスのpadding(12px×2)を引く
+  const displayW = Math.max(Math.min(window.innerWidth, 500) - 56, 280);
   const displayH = Math.min(displayW * 0.65, 280);
   canvas.style.width  = displayW + 'px';
   canvas.style.height = displayH + 'px';
