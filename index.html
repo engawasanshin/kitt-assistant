@@ -3170,11 +3170,11 @@ async function pickExportFolder() {
 async function writeToSavedDir(filename, content) {
   if (!savedDirHandle) return false;
   try {
-    // 権限の再確認（ブラウザ再起動後に必要な場合がある）
+    // 権限確認（'prompt'の場合はユーザージェスチャーが必要なためスキップ）
     const perm = await savedDirHandle.queryPermission({ mode: 'readwrite' });
     if (perm !== 'granted') {
-      const req = await savedDirHandle.requestPermission({ mode: 'readwrite' });
-      if (req !== 'granted') return false;
+      console.warn('[KITT] フォルダ権限なし:', perm);
+      return false; // requestPermissionはユーザージェスチャーなしでは失敗するためスキップ
     }
     const fileHandle = await savedDirHandle.getFileHandle(filename, { create: true });
     const writable = await fileHandle.createWritable();
@@ -3182,7 +3182,8 @@ async function writeToSavedDir(filename, content) {
     await writable.close();
     return true;
   } catch (e) {
-    console.error('[KITT] 自動保存エラー:', e);
+    console.error('[KITT] 自動保存エラー:', e.name, e.message);
+    addSystemMessage(`⚠️ フォルダ保存失敗 (${e.name}): ダウンロードに切り替えます`);
     return false;
   }
 }
