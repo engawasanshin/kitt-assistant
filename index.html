@@ -3190,28 +3190,16 @@ async function writeToSavedDir(filename, content) {
 async function shareOrDownload(filename, content) {
   const isMobile = /iPhone|iPad|Android/i.test(navigator.userAgent);
 
-  // Mac: File System Access API（保存先フォルダが設定済みなら自動保存）
+  // Mac: 保存先フォルダが設定済みなら自動保存
   if (!isMobile && savedDirHandle) {
     const ok = await writeToSavedDir(filename, content);
     if (ok) {
       addSystemMessage(`✅ 自動保存: ${savedDirHandle.name}/${filename}`);
-      return;
+      return true;
     }
     // 権限失効時はフォールバック
-    addSystemMessage('⚠ 保存先への書き込みに失敗。フォルダを再設定してください。');
+    addSystemMessage('⚠ 保存先への書き込みに失敗。Settingsからフォルダを再設定してください。');
     savedDirHandle = null;
-  }
-
-  // Mac: 初回はフォルダ選択を促す（File System Access API対応ブラウザ）
-  if (!isMobile && window.showDirectoryPicker) {
-    const picked = await pickExportFolder();
-    if (picked) {
-      const ok = await writeToSavedDir(filename, content);
-      if (ok) {
-        addSystemMessage(`✅ 保存しました: ${savedDirHandle.name}/${filename}`);
-        return;
-      }
-    }
   }
 
   // iPhone: Web Share API
@@ -3221,21 +3209,30 @@ async function shareOrDownload(filename, content) {
       addSystemMessage('📂 保存先: iCloud Drive > PersonalSecretary > 00_InfoHub > inbox');
       await navigator.share({ files: [file], title: filename });
       addSystemMessage(`共有しました: ${filename}`);
-      return;
+      return true;
     } catch (e) {
-      if (e.name === 'AbortError') return;
+      if (e.name === 'AbortError') return false;
     }
   }
 
-  // 最終フォールバック: ダウンロード
-  const blob = new Blob([content], { type: 'text/markdown' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
-  addSystemMessage(`ダウンロード: ${filename}`);
+  // Mac: ダウンロード（保存先未設定 or 設定失敗時）
+  // ※ Settingsの「保存先フォルダを選択」でiCloud inboxを指定すると自動保存になります
+  try {
+    const blob = new Blob([content], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    addSystemMessage(`💾 ダウンロードしました: ${filename}\n（Macの場合: ダウンロードフォルダ → iCloud inbox に移動してください）`);
+    return true;
+  } catch (e) {
+    addSystemMessage(`❌ 保存失敗: ${e.message}`);
+    return false;
+  }
 }
 
 function exportCurrentAnalysis() {
@@ -3270,20 +3267,18 @@ async function exportFullConversation() {
   }
 
   const { md, id, contextMessagesCount } = result;
-  await shareOrDownload(`kitt_conversation_${id}.md`, md);
+  const saved = await shareOrDownload(`kitt_conversation_${id}.md`, md);
 
-  // Record last export time and index
-  localStorage.setItem('kitt_last_export', new Date().toISOString());
-  localStorage.setItem('kitt_last_export_index', chatHistory.length.toString());
-
-  // Update export button UI
-  updateExportButtonUI();
-
-  // Success message
-  if (lastExportIndex > 0) {
-    addSystemMessage(`✅ エクスポート完了: 新規 ${newMessagesCount}件 + 文脈 ${contextMessagesCount}件`);
-  } else {
-    addSystemMessage(`✅ エクスポート完了: ${chatHistory.length}件`);
+  if (saved !== false) {
+    // 保存成功（またはダウンロード完了）→ インデックスを更新
+    localStorage.setItem('kitt_last_export', new Date().toISOString());
+    localStorage.setItem('kitt_last_export_index', chatHistory.length.toString());
+    updateExportButtonUI();
+    if (lastExportIndex > 0) {
+      addSystemMessage(`✅ エクスポート完了: 新規 ${newMessagesCount}件 + 文脈 ${contextMessagesCount}件`);
+    } else {
+      addSystemMessage(`✅ エクスポート完了: ${chatHistory.length}件`);
+    }
   }
 }
 
