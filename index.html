@@ -1504,6 +1504,15 @@ async function loadAlphaVantageApiKey() {
 }
 
 /**
+ * 東証ティッカーのフォーマット変換（.T → .TYO）
+ * Alpha Vantageは東証銘柄に .TYO サフィックスを使用
+ */
+function toAvSymbol(symbol) {
+  // 数字 + ".T" で終わる場合（例: 7203.T → 7203.TYO）
+  return symbol.replace(/^(\d+)\.T$/, '$1.TYO');
+}
+
+/**
  * Alpha Vantage APIで株価取得（GLOBAL_QUOTE）
  */
 async function fetchStockQuote(symbol) {
@@ -1513,7 +1522,8 @@ async function fetchStockQuote(symbol) {
     throw new Error('Alpha Vantage APIキーが設定されていません');
   }
 
-  const url = `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${symbol}&apikey=${apiKey}`;
+  const avSymbol = toAvSymbol(symbol);
+  const url = `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${avSymbol}&apikey=${apiKey}`;
   console.log('[DEBUG] Fetching:', url.replace(apiKey, 'REDACTED'));
 
   const res = await fetch(url);
@@ -1554,7 +1564,7 @@ async function fetchNewsSentiment(symbol) {
     return { feed: [], overallSentiment: 0 };
   }
 
-  const url = `https://www.alphavantage.co/query?function=NEWS_SENTIMENT&tickers=${symbol}&apikey=${apiKey}`;
+  const url = `https://www.alphavantage.co/query?function=NEWS_SENTIMENT&tickers=${toAvSymbol(symbol)}&apikey=${apiKey}`;
 
   try {
     const res = await fetch(url);
@@ -2326,7 +2336,7 @@ async function fetchDailyHistory(ticker, months = 3) {
   // フェッチ実行（並列リクエスト防止マップに登録）
   const fetchPromise = (async () => {
     try {
-      const url = `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=${ticker}&outputsize=compact&apikey=${alphaKey}`;
+      const url = `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=${toAvSymbol(ticker)}&outputsize=compact&apikey=${alphaKey}`;
       const res = await fetch(url);
       if (!res.ok) throw new Error(`Alpha Vantage API Error: ${res.status}`);
 
