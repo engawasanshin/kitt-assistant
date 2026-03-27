@@ -3218,19 +3218,22 @@ async function shareOrDownload(filename, content) {
     }
   }
 
-  // Mac: ダウンロード（保存先未設定 or 設定失敗時）
-  // ※ Settingsの「保存先フォルダを選択」でiCloud inboxを指定すると自動保存になります
+  // Mac: ダウンロードリンクをチャットに表示（Chromeでは自動click()がブロックされるため）
   try {
     const blob = new Blob([content], { type: 'text/markdown' });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-    addSystemMessage(`💾 ダウンロードしました: ${filename}\n（Macの場合: ダウンロードフォルダ → iCloud inbox に移動してください）`);
+    // ダウンロードリンクボタンをチャットに追加（ユーザーが直接クリック = ジェスチャー有効）
+    const chatArea = document.getElementById('chatArea');
+    const div = document.createElement('div');
+    div.className = 'message system';
+    div.innerHTML = `💾 準備完了: <a href="${url}" download="${filename}"
+      style="display:inline-block;margin-top:6px;padding:8px 16px;background:#1a5c1a;color:#88cc88;
+             border-radius:6px;text-decoration:none;font-weight:bold;">
+      ⬇️ ${filename} をダウンロード
+    </a><br><small style="color:#888;font-size:10px;">クリック後 → Downloadsフォルダ → inboxに移動</small>`;
+    chatArea.appendChild(div);
+    chatArea.scrollTop = chatArea.scrollHeight;
+    setTimeout(() => URL.revokeObjectURL(url), 5 * 60 * 1000); // 5分後に解放
     return true;
   } catch (e) {
     addSystemMessage(`❌ 保存失敗: ${e.message}`);
