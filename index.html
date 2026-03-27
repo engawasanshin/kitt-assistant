@@ -3755,7 +3755,7 @@ function calculateDistance(lat1, lng1, lat2, lng2) {
 // 現在地が会社・家の範囲内かチェック（半径100m以内）
 function isNearKnownLocation(currentLat, currentLng) {
   const locations = getUserLocations();
-  const threshold = 100; // 100メートル
+  const threshold = 300; // 300メートル（塩川さん指定）
 
   if (locations.home) {
     const distanceToHome = calculateDistance(currentLat, currentLng, locations.home.lat, locations.home.lng);
