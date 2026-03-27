@@ -3203,16 +3203,18 @@ async function shareOrDownload(filename, content) {
     savedDirHandle = null;
   }
 
-  // iPhone: Web Share API
-  const file = new File([content], filename, { type: 'text/markdown' });
-  if (navigator.canShare && navigator.canShare({ files: [file] })) {
-    try {
-      addSystemMessage('📂 保存先: iCloud Drive > PersonalSecretary > 00_InfoHub > inbox');
-      await navigator.share({ files: [file], title: filename });
-      addSystemMessage(`共有しました: ${filename}`);
-      return true;
-    } catch (e) {
-      if (e.name === 'AbortError') return false;
+  // iPhone: Web Share API（Macは除外 - EdgeでもWeb Share APIが有効だが動作が不安定）
+  if (isMobile) {
+    const file = new File([content], filename, { type: 'text/markdown' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try {
+        addSystemMessage('📂 保存先: iCloud Drive > PersonalSecretary > 00_InfoHub > inbox');
+        await navigator.share({ files: [file], title: filename });
+        addSystemMessage(`共有しました: ${filename}`);
+        return true;
+      } catch (e) {
+        if (e.name === 'AbortError') return false;
+      }
     }
   }
 
