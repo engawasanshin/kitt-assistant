@@ -1165,7 +1165,7 @@ function getAppStateContext() {
   ctx += '\n【アプリ健全性】\n';
   // APIキー存在チェック
   const hasGeminiKey = !!apiKey && apiKey.length > 10;
-  const hasAvKey = !!(localStorage.getItem('kitt_av_key_encrypted') || localStorage.getItem('kitt_av_key'));
+  const hasAvKey = !!localStorage.getItem('alpha_vantage_api_key_encrypted');
   ctx += `GeminiAPIキー: ${hasGeminiKey ? '✅ 設定済み' : '❌ 未設定'}\n`;
   ctx += `Alpha VantageAPIキー: ${hasAvKey ? '✅ 設定済み' : '❌ 未設定'}\n`;
   // localStorageの読み書きテスト
@@ -4885,7 +4885,7 @@ function analyzeAndRecord(text) {
     msg += `【ウォッチリスト表示】${collapsed === '0' ? '展開中' : '折りたたみ中'}\n`;
     msg += `【ローカル記憶】${localMemLen}件\n`;
     msg += `\n【APIキー状態】Gemini: ${apiKey ? '✅設定済み' : '❌未設定'}\n`;
-    const hasAvKey2 = !!(localStorage.getItem('kitt_av_key_encrypted') || localStorage.getItem('kitt_av_key'));
+    const hasAvKey2 = !!localStorage.getItem('alpha_vantage_api_key_encrypted');
     msg += `【APIキー状態】Alpha Vantage: ${hasAvKey2 ? '✅設定済み' : '❌未設定'}\n`;
 
     // エラーログ
