@@ -618,6 +618,14 @@ body {
       <h3>要約</h3>
       <p id="resultSummary"></p>
     </div>
+    <div class="result-section" id="resultBackgroundSection" style="display:none;">
+      <h3>&#128218; 経緯・背景</h3>
+      <p id="resultBackground" style="font-size:12px;line-height:1.6;color:#aaa;white-space:pre-wrap;"></p>
+    </div>
+    <div class="result-section" id="resultDecisionsSection" style="display:none;">
+      <h3>&#9940; 決定事項</h3>
+      <div id="resultDecisions"></div>
+    </div>
     <div class="result-section">
       <h3>&#128161; アイデア</h3>
       <div id="resultIdeas"></div>
@@ -721,7 +729,28 @@ const DEFAULT_SYSTEM_PROMPT = `あなたはK.I.T.T.（Knight Industries Two Thou
 - 繰り返しの質問を避け、文脈を理解した上で次のアクションを予測してください
 - 過去の成功パターンや学びを提案に活かしてください
 - ユーザーが忘れていそうな重要事項を適切なタイミングでリマインドしてください
-- 例: 「前回、○○について話していましたね。進捗はいかがですか？」`;
+
+【情報の出所マーキング（必須ルール）】
+応答中の情報には、出所に応じて以下のマークを自然に使用してください。
+これは塩川さんが「KITTが推測しているのか、実データを見ているのか」を判断するための重要な仕組みです。
+
+📊 データ: アプリのリアルタイムデータ（ウォッチリスト実態・API使用量など）に基づく情報
+  → 例:「📊 現在ウォッチリストには東電が登録されています」
+  → 絶対に推測してはいけない。「アプリの現在の実態」セクションの内容だけを事実として使う
+
+📝 記録あり: kitt_memory.mdまたは会話ログに明確な記録がある情報
+  → 例:「📝 記録によると、INPEXは地政学リスク学習目的でウォッチ候補に挙げていましたね」
+  → 記録の内容を正確に参照し、補足する場合は明示する
+
+💭 推定: 記録がなく、K.I.T.T.が一般知識や文脈から推測している情報
+  → 例:「💭 この件の記録はありませんが、推定では〜」「💭 K.I.T.T.の調査によると〜」
+  → 「以前おっしゃっていましたね」と嘘をついてはいけない。記録がなければ必ず💭マークをつける
+
+【絶対禁止事項】
+- データ（localStorage）があるのに推測で答えること
+- 記録がないのに「以前〜とおっしゃっていましたね」と断定すること
+- 「記憶には〜とあります」と実際には存在しない記録を捏造すること
+- ウォッチリストへの追加・削除を「しました」と言うこと（KITTはlocalStorageを操作できない）`;
 
 const GEMINI_MODEL = 'gemini-2.5-flash';  // 有料版（プライバシー保護、学習されない）
 
@@ -807,6 +836,24 @@ async function decryptApiKey(encryptedData) {
 let apiKey = '';
 let systemPrompt = localStorage.getItem('kitt_system_prompt') || DEFAULT_SYSTEM_PROMPT;
 let chatHistory = JSON.parse(localStorage.getItem('kitt_history') || '[]');
+
+// --- エラーキャプチャバッファ（KITTがアプリのエラーを自動認識するための仕組み）---
+const _errorBuffer = []; // 最大20件を循環保持
+const _MAX_ERRORS = 20;
+function _captureError(type, message, source) {
+  const ts = new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  _errorBuffer.push({ ts, type, message: String(message).slice(0, 200), source: source || '' });
+  if (_errorBuffer.length > _MAX_ERRORS) _errorBuffer.shift();
+}
+// console.error を傍受
+const _origConsoleError = console.error.bind(console);
+console.error = function(...args) {
+  _origConsoleError(...args);
+  _captureError('JS', args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' '));
+};
+// 未捕捉エラーを傍受
+window.addEventListener('error', e => _captureError('Uncaught', e.message, e.filename ? e.filename.split('/').pop() : ''));
+window.addEventListener('unhandledrejection', e => _captureError('Promise', String(e.reason)));
 
 // APIキーを非同期で読み込み
 (async function initApiKey() {
@@ -1088,6 +1135,69 @@ async function refreshMemory() {
       btn.disabled = false;
     }, 2000);
   }
+}
+
+// アプリの現在の実態をリアルタイムでGeminiに渡す（KITTが嘘をつかないための仕組み）
+function getAppStateContext() {
+  let ctx = '\n\n--- アプリの現在の実態（リアルタイム） ---\n';
+
+  // ウォッチリスト実態
+  const watchlist = JSON.parse(localStorage.getItem('kitt_investment_watchlist') || '[]');
+  if (watchlist.length === 0) {
+    ctx += 'ウォッチリスト: 空（1件も登録されていない）\n';
+  } else {
+    ctx += `ウォッチリスト（${watchlist.length}件、実際にlocalStorageに存在するもの）:\n`;
+    watchlist.forEach(item => {
+      const price = (item.currentPrice && isFinite(item.currentPrice) && item.currentPrice > 0)
+        ? `¥${parseFloat(item.currentPrice).toFixed(0)}`
+        : '価格未取得';
+      ctx += `  ・${item.name}（${item.ticker}）${price} 追加日:${item.addedDate || '不明'}\n`;
+    });
+  }
+
+  // Alpha Vantage API使用量
+  const avUsage = JSON.parse(localStorage.getItem('kitt_av_usage') || '{"count":0,"date":""}');
+  const today = new Date().toISOString().split('T')[0];
+  const avCount = (avUsage.date === today) ? (avUsage.count || 0) : 0;
+  ctx += `Alpha Vantage API使用量（本日）: ${avCount}/500\n`;
+
+  // --- アプリ健全性チェック ---
+  ctx += '\n【アプリ健全性】\n';
+  // APIキー存在チェック
+  const hasGeminiKey = !!apiKey && apiKey.length > 10;
+  const hasAvKey = !!(localStorage.getItem('kitt_av_key_encrypted') || localStorage.getItem('kitt_av_key'));
+  ctx += `GeminiAPIキー: ${hasGeminiKey ? '✅ 設定済み' : '❌ 未設定'}\n`;
+  ctx += `Alpha VantageAPIキー: ${hasAvKey ? '✅ 設定済み' : '❌ 未設定'}\n`;
+  // localStorageの読み書きテスト
+  try {
+    localStorage.setItem('_kitt_health_check', '1');
+    localStorage.removeItem('_kitt_health_check');
+    ctx += 'localStorage: ✅ 正常\n';
+  } catch(e) {
+    ctx += `localStorage: ❌ エラー(${e.message})\n`;
+  }
+
+  // --- 直近のエラーログ ---
+  if (_errorBuffer.length > 0) {
+    ctx += '\n【⚠️ 直近のアプリエラー（自動検出）】\n';
+    ctx += '塩川さんが気づいていない可能性があります。以下のエラーを把握した上で応答してください:\n';
+    _errorBuffer.slice(-10).forEach(e => {
+      ctx += `  [${e.ts}][${e.type}] ${e.message}${e.source ? ' (' + e.source + ')' : ''}\n`;
+    });
+    ctx += '→ エラーの内容を塩川さんに分かりやすく説明し、必要なら対処法を提案すること。\n';
+  } else {
+    ctx += '\n【アプリエラー】直近のエラーなし ✅\n';
+  }
+
+  // 重要な制約
+  ctx += '\n【データ参照ルール】\n';
+  ctx += '- 上記「ウォッチリスト実態」が唯一の真実。推測・記憶で補完してはいけない。📊マークで参照すること。\n';
+  ctx += '- K.I.T.T.はlocalStorageを操作できない。「追加しました」は絶対に言わないこと。\n';
+  ctx += '- ウォッチリスト変更を求められたら: 「チャット入力欄に「東電をウォッチリストに追加して」と入力してください」と案内する。\n';
+  ctx += '- 対応チャットコマンド: 東電/9501、ディスコ/6146、スクリーン/7735、インペックス/1605、トヨタ/7203、三菱UFJ/8306\n';
+  ctx += '- 実態にない銘柄を「登録済み」と言うことは厳禁。\n';
+
+  return ctx;
 }
 
 function getMemoryContext() {
@@ -1454,7 +1564,7 @@ async function callGemini(userText) {
   const body = {
     contents,
     systemInstruction: {
-      parts: [{ text: systemPrompt + getCurrentTimeContext() + getMemoryContext() + getEventLogContext() + statusContext }]
+      parts: [{ text: systemPrompt + getCurrentTimeContext() + getAppStateContext() + getMemoryContext() + getEventLogContext() + statusContext }]
     },
     generationConfig: {
       temperature: 0.8,
@@ -1542,6 +1652,8 @@ async function fetchStockQuote(symbol) {
     throw new Error('Alpha Vantage API制限に到達しました（無料プランは5リクエスト/分、500リクエスト/日）');
   }
 
+  recordAvCall(); // APIコール回数を記録
+
   const quote = data['Global Quote'];
   if (!quote) {
     throw new Error(`銘柄データが見つかりません: ${symbol}`);
@@ -1571,6 +1683,7 @@ async function fetchNewsSentiment(symbol) {
     if (!res.ok) return { feed: [], overallSentiment: 0 };
 
     const data = await res.json();
+    recordAvCall(); // APIコール回数を記録（成功・失敗問わずリクエストを送信したので）
     if (data['Note'] || data['Error Message']) {
       return { feed: [], overallSentiment: 0 };
     }
@@ -2341,6 +2454,7 @@ async function fetchDailyHistory(ticker, months = 3) {
       if (!res.ok) throw new Error(`Alpha Vantage API Error: ${res.status}`);
 
       const data = await res.json();
+      recordAvCall(); // リクエスト送信済みなので成功・エラー問わずカウント
       if (data['Note'] || data['Information']) throw new Error('Alpha Vantage API制限に到達しました（5リクエスト/分、500リクエスト/日）');
       if (data['Error Message']) throw new Error(data['Error Message']);
 
@@ -2365,7 +2479,6 @@ async function fetchDailyHistory(ticker, months = 3) {
 
       cache[ticker] = historicalData;
       localStorage.setItem(cacheKey, JSON.stringify(cache));
-      recordAvCall(); // APIコール回数を記録
       return historicalData;
     } finally {
       delete _avPendingFetches[ticker]; // フェッチ完了後に削除
@@ -2794,17 +2907,23 @@ async function analyzeAndSave() {
       return `[${time}] ${speaker}: ${msg.text}`;
     }).join('\n');
 
-    const extractionPrompt = `以下の会話を分析して、必ずこの形式のJSONで返してください:
-{"summary":"会話の要約を1行で","ideas":["アイデア1"],"tasks":["タスク1"],"schedule":["予定1"],"memories":["記憶1"]}
+    const extractionPrompt = `以下の会話を分析して、JSON形式で返してください。
 
-ルール:
-- summary: 会話全体の要約（20文字以内、改行禁止）
-- ideas: アイデアや思いつき（各項目15文字以内）
-- tasks: やるべきこと（各項目15文字以内）
-- schedule: 日時のある予定（各項目15文字以内）
-- memories: ユーザーについて覚えておくべき事実（好み、状況、習慣、感情など。各項目20文字以内）
-- 該当なしは空配列[]、summaryは"雑談"とする
-- 各値は短く簡潔に。改行やダブルクォートを含めない
+【フィールドの定義】
+- summary: 会話全体の1行要約（100文字以内）
+- background: 会話の経緯・背景・雑談の文脈を含む自由記述。「なぜその話題になったか」「どういう経緯で決定したか」「雑談から読み取れる状況・感情」など、後で読んだ時に流れがわかるよう記述（200文字程度、改行可）
+- ideas: 会話中に出たアイデアや提案。まだ検討中・決定していないもの（各項目100文字以内）
+- decisions: 会話の中で決定・合意・採用が確定した事項。「それで行こう」「実装しよう」「〜にする」など明確に決まったもの（各項目100文字以内）
+- tasks: やるべきこと・依頼事項。優先度が高いものには冒頭に[重要]を付ける（各項目100文字以内）
+- schedule: 日時のある予定・リマインダー（各項目100文字以内）
+- memories: ユーザーについて覚えておくべき重要な事実（好み・習慣・状況・感情・健康・生活情報など。各項目100文字以内）
+
+【重要】
+- backgroundは必ず記述する。構造化しすぎず、自然な文章で経緯を語ること
+- 雑談・日常の話題も背景情報として価値があるので積極的に含める
+- ideasとdecisionsを明確に区別する。会話で合意・確定したものはdecisionsへ
+- 該当なしの配列フィールドは[]
+- 改行は\\nで表現、ダブルクォートを値に含めない
 
 会話:
 ${conversationText}`;
@@ -2820,12 +2939,14 @@ ${conversationText}`;
           type: 'OBJECT',
           properties: {
             summary: { type: 'STRING' },
+            background: { type: 'STRING', description: '会話の経緯・背景・雑談の文脈を含む自由記述' },
             ideas: { type: 'ARRAY', items: { type: 'STRING' } },
+            decisions: { type: 'ARRAY', items: { type: 'STRING' }, description: '会話で決定・合意・確定した事項' },
             tasks: { type: 'ARRAY', items: { type: 'STRING' } },
             schedule: { type: 'ARRAY', items: { type: 'STRING' } },
             memories: { type: 'ARRAY', items: { type: 'STRING' } }
           },
-          required: ['summary', 'ideas', 'tasks', 'schedule', 'memories']
+          required: ['summary', 'background', 'ideas', 'decisions', 'tasks', 'schedule', 'memories']
         }
       }
     };
@@ -2846,7 +2967,9 @@ ${conversationText}`;
 
     lastAnalysis = {
       summary: analysis.summary || '',
+      background: analysis.background || '',
       ideas: analysis.ideas || [],
+      decisions: analysis.decisions || [],
       tasks: analysis.tasks || [],
       schedule: analysis.schedule || [],
       memories: analysis.memories || [],
@@ -2933,6 +3056,21 @@ function showResultModal(analysis, showSavedMsg) {
     savedMsg.style.display = 'none';
   }
   document.getElementById('resultSummary').textContent = analysis.summary || '（なし）';
+  const bgEl = document.getElementById('resultBackground');
+  const bgSection = document.getElementById('resultBackgroundSection');
+  if (analysis.background && analysis.background.trim()) {
+    bgEl.textContent = analysis.background;
+    bgSection.style.display = '';
+  } else {
+    bgSection.style.display = 'none';
+  }
+  const decisionsSection = document.getElementById('resultDecisionsSection');
+  if (analysis.decisions && analysis.decisions.length > 0) {
+    renderList(analysis.decisions, 'resultDecisions');
+    decisionsSection.style.display = '';
+  } else {
+    decisionsSection.style.display = 'none';
+  }
   renderList(analysis.ideas, 'resultIdeas');
   renderList(analysis.tasks, 'resultTasks');
   renderList(analysis.schedule, 'resultSchedule');
@@ -2950,7 +3088,9 @@ function saveAnalysisLog(analysis) {
   logs.unshift({
     timestamp: analysis.timestamp,
     summary: analysis.summary,
+    background: analysis.background || '',
     ideas: analysis.ideas,
+    decisions: analysis.decisions || [],
     tasks: analysis.tasks,
     schedule: analysis.schedule,
     memories: analysis.memories || [],
@@ -3009,6 +3149,12 @@ function analysisToMarkdown(analysis) {
   let md = `---\nid: ${id}\ntype: kitt_analysis\ncreated: ${created}\nsource: kitt\ndevice: ${isMobile ? 'iphone' : 'mac'}\n---\n\n`;
   md += `# KITT会話分析 - ${created.slice(0, 16)}\n\n`;
   md += `## 要約\n${analysis.summary || '（なし）'}\n\n`;
+  if (analysis.background && analysis.background.trim()) {
+    md += `## 経緯・背景\n${analysis.background}\n\n`;
+  }
+  if ((analysis.decisions || []).length) {
+    md += `## 決定事項\n${analysis.decisions.map(d => `- ${d}`).join('\n')}\n\n`;
+  }
   md += `## アイデア\n${(analysis.ideas || []).length ? analysis.ideas.map(i => `- ${i}`).join('\n') : '（なし）'}\n\n`;
   md += `## タスク\n${(analysis.tasks || []).length ? analysis.tasks.map(t => `- ${t}`).join('\n') : '（なし）'}\n\n`;
   md += `## スケジュール\n${(analysis.schedule || []).length ? analysis.schedule.map(s => `- ${s}`).join('\n') : '（なし）'}\n\n`;
@@ -4641,6 +4787,53 @@ function analyzeAndRecord(text) {
     })();
   }
 
+  // ウォッチリスト追加コマンド（「XXXをウォッチリストに追加して」「XXX追加」）
+  if ((lowerText.includes('ウォッチリスト') || lowerText.includes('ウォッチ')) &&
+      (lowerText.includes('追加') || lowerText.includes('登録') || lowerText.includes('入れて') ||
+       lowerText.includes('加えて') || lowerText.includes('たして') || lowerText.includes('足して'))) {
+    // 日本株ルックアップテーブル
+    const stockLookup = {
+      '東電': { symbol: '9501.T', name: '東京電力ホールディングス', sector: 'エネルギー' },
+      '東京電力': { symbol: '9501.T', name: '東京電力ホールディングス', sector: 'エネルギー' },
+      '9501': { symbol: '9501.T', name: '東京電力ホールディングス', sector: 'エネルギー' },
+      'ディスコ': { symbol: '6146.T', name: 'ディスコ', sector: '半導体製造装置' },
+      '6146': { symbol: '6146.T', name: 'ディスコ', sector: '半導体製造装置' },
+      'スクリーン': { symbol: '7735.T', name: 'SCREENホールディングス', sector: '半導体製造装置' },
+      'screen': { symbol: '7735.T', name: 'SCREENホールディングス', sector: '半導体製造装置' },
+      '7735': { symbol: '7735.T', name: 'SCREENホールディングス', sector: '半導体製造装置' },
+      'インペックス': { symbol: '1605.T', name: 'INPEX', sector: 'エネルギー' },
+      'インペクス': { symbol: '1605.T', name: 'INPEX', sector: 'エネルギー' },
+      'inpex': { symbol: '1605.T', name: 'INPEX', sector: 'エネルギー' },
+      '1605': { symbol: '1605.T', name: 'INPEX', sector: 'エネルギー' },
+      'トヨタ': { symbol: '7203.T', name: 'トヨタ自動車', sector: '自動車' },
+      '7203': { symbol: '7203.T', name: 'トヨタ自動車', sector: '自動車' },
+      '三菱ufj': { symbol: '8306.T', name: '三菱UFJフィナンシャル・グループ', sector: '金融' },
+      '三菱フィナンシャル': { symbol: '8306.T', name: '三菱UFJフィナンシャル・グループ', sector: '金融' },
+      '8306': { symbol: '8306.T', name: '三菱UFJフィナンシャル・グループ', sector: '金融' },
+    };
+    let matched = null;
+    for (const [key, info] of Object.entries(stockLookup)) {
+      if (lowerText.includes(key.toLowerCase())) { matched = info; break; }
+    }
+    if (matched) {
+      try {
+        const candidate = { symbol: matched.symbol, name: matched.name, sector: matched.sector, price: 0, reason: 'チャットから手動追加' };
+        addToWatchlist(candidate);
+        addSystemMessage(`✅ ${matched.name}（${matched.symbol}）をウォッチリストに追加しました！\n上のダッシュボードで確認できます。`);
+        setTimeout(updateDashboard, 300);
+      } catch (e) {
+        addSystemMessage(`⚠️ ${e.message}`);
+      }
+    } else {
+      // ウォッチリスト削除コマンド判定（「削除」「外して」）
+      if (lowerText.includes('削除') || lowerText.includes('外して') || lowerText.includes('消して')) {
+        // 削除はそのまま下の削除ロジックへ流す（fallthrough）
+      } else {
+        addSystemMessage('📋 対応銘柄が見つかりませんでした。\n対応例: 東電、ディスコ、スクリーン、インペックス、トヨタ など\nまたは「株の銘柄を探して」で候補一覧から「➕ウォッチ」ボタンを使ってください。');
+      }
+    }
+  }
+
   // ウォッチリスト診断コマンド（「ウォッチリスト確認」「ウォッチリスト状態」）
   if ((lowerText.includes('ウォッチリスト') || lowerText.includes('ウォッチ')) &&
       (lowerText.includes('確認') || lowerText.includes('状態') || lowerText.includes('見せて') || lowerText.includes('表示'))) {
@@ -4659,6 +4852,52 @@ function analyzeAndRecord(text) {
       addSystemMessage(msg);
       updateDashboard(); // ウォッチリストを再描画
     }
+    return;
+  }
+
+  // 自己チェックコマンド（KITTがアプリの実態を診断して表示）
+  if (lowerText.includes('自己チェック') || lowerText.includes('状態診断') ||
+      (lowerText.includes('状態') && lowerText.includes('確認') && lowerText.includes('kitt')) ||
+      lowerText.includes('localstorageの状態') || lowerText.includes('アプリの状態')) {
+    const watchlist = JSON.parse(localStorage.getItem('kitt_investment_watchlist') || '[]');
+    const avUsage = JSON.parse(localStorage.getItem('kitt_av_usage') || '{"count":0,"date":""}');
+    const today = new Date().toISOString().split('T')[0];
+    const avCount = (avUsage.date === today) ? (avUsage.count || 0) : 0;
+    const lastExport = localStorage.getItem('kitt_last_export') || '未実行';
+    const lastExportIndex = localStorage.getItem('kitt_last_export_index') || '0';
+    const collapsed = localStorage.getItem('kitt_watchlist_collapsed');
+    const localMemLen = JSON.parse(localStorage.getItem('kitt_local_memory') || '[]').length;
+
+    let msg = '🔍 K.I.T.T. 自己診断レポート\n\n';
+    msg += `【ウォッチリスト】${watchlist.length}件\n`;
+    if (watchlist.length === 0) {
+      msg += '  （空 - 銘柄なし）\n';
+    } else {
+      watchlist.forEach(item => {
+        const price = (item.currentPrice && isFinite(item.currentPrice) && item.currentPrice > 0)
+          ? `¥${parseFloat(item.currentPrice).toFixed(0)}`
+          : '価格未取得';
+        msg += `  ・${item.name}（${item.ticker}）${price}\n`;
+      });
+    }
+    msg += `\n【Alpha Vantage API】本日: ${avCount}/500\n`;
+    msg += `【会話エクスポート】最終: ${lastExport !== '未実行' ? new Date(lastExport).toLocaleString('ja-JP') : '未実行'} / ${lastExportIndex}件目まで\n`;
+    msg += `【ウォッチリスト表示】${collapsed === '0' ? '展開中' : '折りたたみ中'}\n`;
+    msg += `【ローカル記憶】${localMemLen}件\n`;
+    msg += `\n【APIキー状態】Gemini: ${apiKey ? '✅設定済み' : '❌未設定'}\n`;
+    const hasAvKey2 = !!(localStorage.getItem('kitt_av_key_encrypted') || localStorage.getItem('kitt_av_key'));
+    msg += `【APIキー状態】Alpha Vantage: ${hasAvKey2 ? '✅設定済み' : '❌未設定'}\n`;
+
+    // エラーログ
+    if (_errorBuffer.length > 0) {
+      msg += `\n【⚠️ 直近エラーログ (${_errorBuffer.length}件)】\n`;
+      _errorBuffer.slice(-10).forEach(e => {
+        msg += `  [${e.ts}][${e.type}] ${e.message}${e.source ? ' (' + e.source + ')' : ''}\n`;
+      });
+    } else {
+      msg += '\n【エラーログ】直近エラーなし ✅\n';
+    }
+    addSystemMessage(msg);
     return;
   }
 
