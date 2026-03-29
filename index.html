@@ -2414,7 +2414,56 @@ JSON形式で回答してください。
 
 // ===== Phase 3: テクニカル分析 =====
 
-// 過去株価データを取得・キャッシュ（同日再取得確認・重複リクエスト防止付き）
+/**
+ * Yahoo Finance APIで過去データ取得（無料・APIキー不要・CORS対応）
+ * 東証銘柄: 1605.T, 7203.T など .T サフィックス
+ */
+async function fetchDailyHistoryYahoo(ticker, months = 3) {
+  const range = months <= 1 ? '1mo' : months <= 3 ? '3mo' : months <= 6 ? '6mo' : '1y';
+  // Yahoo Financeは .T サフィックスをそのまま使用
+  const yhSymbol = ticker.replace(/\.TYO$/, '.T'); // .TYOなら.Tに変換
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yhSymbol)}?interval=1d&range=${range}`;
+
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Yahoo Finance: HTTP ${res.status}`);
+
+  const data = await res.json();
+  const result = data?.chart?.result?.[0];
+  if (!result) throw new Error(`Yahoo Finance: ${yhSymbol}のデータがありません`);
+
+  const timestamps = result.timestamp || [];
+  const q = result.indicators?.quote?.[0] || {};
+  if (!timestamps.length) throw new Error(`Yahoo Finance: ${yhSymbol}のデータが空です`);
+
+  const targetDays = Math.min(months * 22, timestamps.length);
+  const slice = (arr) => (arr || []).slice(-targetDays).map(v => v === null ? NaN : v);
+
+  const dates   = timestamps.slice(-targetDays).map(t => new Date(t * 1000).toISOString().split('T')[0]);
+  const closes  = slice(q.close);
+  const highs   = slice(q.high);
+  const lows    = slice(q.low);
+  const opens   = slice(q.open);
+  const volumes = slice(q.volume);
+
+  // NaNが含まれるデータを除去
+  const valid = dates.map((_, i) => !isNaN(closes[i]));
+  const filter = arr => arr.filter((_, i) => valid[i]);
+
+  return {
+    ticker,
+    dates:   filter(dates),
+    closes:  filter(closes),
+    highs:   filter(highs),
+    lows:    filter(lows),
+    opens:   filter(opens),
+    volumes: filter(volumes),
+    fetchedAt: new Date().toISOString(),
+    months,
+    source: 'yahoo'
+  };
+}
+
+// 過去株価データを取得・キャッシュ（Yahoo Finance優先、Alpha Vantageフォールバック）
 const _avPendingFetches = {};
 
 async function fetchDailyHistory(ticker, months = 3) {
@@ -2442,67 +2491,68 @@ async function fetchDailyHistory(ticker, months = 3) {
     const remaining = AV_DAILY_LIMIT - avUsage.count;
     const confirmed = await showAvConfirm(ticker, cacheDate, remaining);
     if (!confirmed) {
-      return cache[ticker]; // 前回のキャッシュをそのまま使用
+      return cache[ticker];
     }
   }
-
-  const alphaKey = await loadAlphaVantageApiKey();
-  if (!alphaKey) throw new Error('Alpha Vantage APIキーが設定されていません（Settingsから設定してください）');
 
   // フェッチ実行（並列リクエスト防止マップに登録）
   const fetchPromise = (async () => {
     try {
-      // TIME_SERIES_DAILYのシンボル形式を試行（.TYO → .T のフォールバック付き）
-      const symbolsToTry = [toAvSymbol(ticker)];
-      // .TYO形式の場合、.T形式もフォールバック候補に追加
-      if (toAvSymbol(ticker) !== ticker) {
-        symbolsToTry.push(ticker); // 元の形式（例: 1605.T）
-        symbolsToTry.push(ticker.replace(/\.\w+$/, '')); // 数字のみ（例: 1605）
+      // ① Yahoo Finance を優先（無料・APIキー不要・日本株対応）
+      try {
+        const hist = await fetchDailyHistoryYahoo(ticker, months);
+        cache[ticker] = hist;
+        localStorage.setItem(cacheKey, JSON.stringify(cache));
+        return hist;
+      } catch (yhErr) {
+        console.warn('[Yahoo Finance] 失敗、Alpha Vantageにフォールバック:', yhErr.message);
       }
 
-      let data = null;
-      let usedSymbol = null;
+      // ② Alpha Vantage フォールバック
+      const alphaKey = await loadAlphaVantageApiKey();
+      if (!alphaKey) throw new Error('Yahoo Financeでデータ取得できませんでした。Alpha Vantage APIキーも未設定です。');
+
+      const symbolsToTry = [toAvSymbol(ticker)];
+      if (toAvSymbol(ticker) !== ticker) {
+        symbolsToTry.push(ticker);
+        symbolsToTry.push(ticker.replace(/\.\w+$/, ''));
+      }
+
       for (const sym of symbolsToTry) {
         const url = `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=${sym}&outputsize=compact&apikey=${alphaKey}`;
         const res = await fetch(url);
         if (!res.ok) throw new Error(`Alpha Vantage API Error: ${res.status}`);
         const d = await res.json();
         recordAvCall();
-        if (d['Note'] || d['Information']) throw new Error('Alpha Vantage API制限に到達しました（5リクエスト/分、500リクエスト/日）');
+        if (d['Note'] || d['Information']) throw new Error('Alpha Vantage API制限（5リクエスト/分、500/日）');
         if (d['Error Message']) {
-          // このシンボル形式は無効 → 次の形式を試す
           if (sym !== symbolsToTry[symbolsToTry.length - 1]) continue;
-          throw new Error(`${d['Error Message']}（試行シンボル: ${symbolsToTry.join(', ')}）`);
+          throw new Error(`データ取得失敗: Yahoo Finance・Alpha Vantage両方で取得できませんでした`);
         }
-        data = d;
-        usedSymbol = sym;
-        break;
+
+        const timeSeries = d['Time Series (Daily)'];
+        if (!timeSeries) throw new Error(`${ticker}のデータが取得できませんでした`);
+
+        const targetDays = Math.min(months * 22, 100);
+        const dates = Object.keys(timeSeries).sort().slice(-targetDays);
+        const historicalData = {
+          ticker, dates,
+          closes:  dates.map(dt => parseFloat(timeSeries[dt]['4. close'])),
+          highs:   dates.map(dt => parseFloat(timeSeries[dt]['2. high'])),
+          lows:    dates.map(dt => parseFloat(timeSeries[dt]['3. low'])),
+          opens:   dates.map(dt => parseFloat(timeSeries[dt]['1. open'])),
+          volumes: dates.map(dt => parseInt(timeSeries[dt]['5. volume'])),
+          fetchedAt: new Date().toISOString(),
+          months,
+          source: 'alphavantage'
+        };
+        cache[ticker] = historicalData;
+        localStorage.setItem(cacheKey, JSON.stringify(cache));
+        return historicalData;
       }
-
-      const timeSeries = data['Time Series (Daily)'];
-      if (!timeSeries) throw new Error(`${ticker}のデータが取得できませんでした`);
-
-      // compact = 直近100件。months分だけ切り出す（1ヶ月≈21営業日）
-      const targetDays = Math.min(months * 22, 100);
-      const dates = Object.keys(timeSeries).sort().slice(-targetDays);
-
-      const historicalData = {
-        ticker,
-        dates,
-        closes:  dates.map(d => parseFloat(timeSeries[d]['4. close'])),
-        highs:   dates.map(d => parseFloat(timeSeries[d]['2. high'])),
-        lows:    dates.map(d => parseFloat(timeSeries[d]['3. low'])),
-        opens:   dates.map(d => parseFloat(timeSeries[d]['1. open'])),
-        volumes: dates.map(d => parseInt(timeSeries[d]['5. volume'])),
-        fetchedAt: new Date().toISOString(),
-        months
-      };
-
-      cache[ticker] = historicalData;
-      localStorage.setItem(cacheKey, JSON.stringify(cache));
-      return historicalData;
+      throw new Error('全データソースで取得失敗');
     } finally {
-      delete _avPendingFetches[ticker]; // フェッチ完了後に削除
+      delete _avPendingFetches[ticker];
     }
   })();
 
@@ -2651,7 +2701,8 @@ async function handleTechnicalAnalysis(ticker) {
     const ind = result.indicators;
 
     // チャートデータを保存（再表示用）
-    const chartTitle = `📈 ${name}（${ticker}） テクニカル分析`;
+    const sourceLabel = result.hist.source === 'yahoo' ? ' [Yahoo Finance]' : result.hist.source === 'alphavantage' ? ' [Alpha Vantage]' : '';
+    const chartTitle = `📈 ${name}（${ticker}） テクニカル分析${sourceLabel}`;
     _lastChartState = { hist: result.hist, indicators: ind, title: chartTitle };
 
     // チャートモーダルを表示 → 3段階フォールバックで描画
