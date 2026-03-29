@@ -2449,14 +2449,32 @@ async function fetchDailyHistory(ticker, months = 3) {
   // フェッチ実行（並列リクエスト防止マップに登録）
   const fetchPromise = (async () => {
     try {
-      const url = `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=${toAvSymbol(ticker)}&outputsize=compact&apikey=${alphaKey}`;
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`Alpha Vantage API Error: ${res.status}`);
+      // TIME_SERIES_DAILYのシンボル形式を試行（.TYO → .T のフォールバック付き）
+      const symbolsToTry = [toAvSymbol(ticker)];
+      // .TYO形式の場合、.T形式もフォールバック候補に追加
+      if (toAvSymbol(ticker) !== ticker) {
+        symbolsToTry.push(ticker); // 元の形式（例: 1605.T）
+        symbolsToTry.push(ticker.replace(/\.\w+$/, '')); // 数字のみ（例: 1605）
+      }
 
-      const data = await res.json();
-      recordAvCall(); // リクエスト送信済みなので成功・エラー問わずカウント
-      if (data['Note'] || data['Information']) throw new Error('Alpha Vantage API制限に到達しました（5リクエスト/分、500リクエスト/日）');
-      if (data['Error Message']) throw new Error(data['Error Message']);
+      let data = null;
+      let usedSymbol = null;
+      for (const sym of symbolsToTry) {
+        const url = `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=${sym}&outputsize=compact&apikey=${alphaKey}`;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`Alpha Vantage API Error: ${res.status}`);
+        const d = await res.json();
+        recordAvCall();
+        if (d['Note'] || d['Information']) throw new Error('Alpha Vantage API制限に到達しました（5リクエスト/分、500リクエスト/日）');
+        if (d['Error Message']) {
+          // このシンボル形式は無効 → 次の形式を試す
+          if (sym !== symbolsToTry[symbolsToTry.length - 1]) continue;
+          throw new Error(`${d['Error Message']}（試行シンボル: ${symbolsToTry.join(', ')}）`);
+        }
+        data = d;
+        usedSymbol = sym;
+        break;
+      }
 
       const timeSeries = data['Time Series (Daily)'];
       if (!timeSeries) throw new Error(`${ticker}のデータが取得できませんでした`);
