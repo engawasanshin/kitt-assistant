@@ -4890,50 +4890,102 @@ function analyzeAndRecord(text) {
     })();
   }
 
-  // ウォッチリスト追加コマンド（「XXXをウォッチリストに追加して」「XXX追加」）
+  // 日本株ルックアップテーブル（追加・削除で共用）
+  const _stockLookup = {
+    '東電': { symbol: '9501.T', name: '東京電力ホールディングス', sector: 'エネルギー' },
+    '東京電力': { symbol: '9501.T', name: '東京電力ホールディングス', sector: 'エネルギー' },
+    '9501': { symbol: '9501.T', name: '東京電力ホールディングス', sector: 'エネルギー' },
+    'ディスコ': { symbol: '6146.T', name: 'ディスコ', sector: '半導体製造装置' },
+    '6146': { symbol: '6146.T', name: 'ディスコ', sector: '半導体製造装置' },
+    'スクリーン': { symbol: '7735.T', name: 'SCREENホールディングス', sector: '半導体製造装置' },
+    'screen': { symbol: '7735.T', name: 'SCREENホールディングス', sector: '半導体製造装置' },
+    '7735': { symbol: '7735.T', name: 'SCREENホールディングス', sector: '半導体製造装置' },
+    'インペックス': { symbol: '1605.T', name: 'INPEX', sector: 'エネルギー' },
+    'インペクス': { symbol: '1605.T', name: 'INPEX', sector: 'エネルギー' },
+    'inpex': { symbol: '1605.T', name: 'INPEX', sector: 'エネルギー' },
+    '1605': { symbol: '1605.T', name: 'INPEX', sector: 'エネルギー' },
+    'トヨタ': { symbol: '7203.T', name: 'トヨタ自動車', sector: '自動車' },
+    '7203': { symbol: '7203.T', name: 'トヨタ自動車', sector: '自動車' },
+    '三菱ufj': { symbol: '8306.T', name: '三菱UFJフィナンシャル・グループ', sector: '金融' },
+    '三菱フィナンシャル': { symbol: '8306.T', name: '三菱UFJフィナンシャル・グループ', sector: '金融' },
+    '8306': { symbol: '8306.T', name: '三菱UFJフィナンシャル・グループ', sector: '金融' },
+  };
+
+  // ウォッチリスト追加コマンド（複数銘柄一括対応）
   if ((lowerText.includes('ウォッチリスト') || lowerText.includes('ウォッチ')) &&
       (lowerText.includes('追加') || lowerText.includes('登録') || lowerText.includes('入れて') ||
        lowerText.includes('加えて') || lowerText.includes('たして') || lowerText.includes('足して'))) {
-    // 日本株ルックアップテーブル
-    const stockLookup = {
-      '東電': { symbol: '9501.T', name: '東京電力ホールディングス', sector: 'エネルギー' },
-      '東京電力': { symbol: '9501.T', name: '東京電力ホールディングス', sector: 'エネルギー' },
-      '9501': { symbol: '9501.T', name: '東京電力ホールディングス', sector: 'エネルギー' },
-      'ディスコ': { symbol: '6146.T', name: 'ディスコ', sector: '半導体製造装置' },
-      '6146': { symbol: '6146.T', name: 'ディスコ', sector: '半導体製造装置' },
-      'スクリーン': { symbol: '7735.T', name: 'SCREENホールディングス', sector: '半導体製造装置' },
-      'screen': { symbol: '7735.T', name: 'SCREENホールディングス', sector: '半導体製造装置' },
-      '7735': { symbol: '7735.T', name: 'SCREENホールディングス', sector: '半導体製造装置' },
-      'インペックス': { symbol: '1605.T', name: 'INPEX', sector: 'エネルギー' },
-      'インペクス': { symbol: '1605.T', name: 'INPEX', sector: 'エネルギー' },
-      'inpex': { symbol: '1605.T', name: 'INPEX', sector: 'エネルギー' },
-      '1605': { symbol: '1605.T', name: 'INPEX', sector: 'エネルギー' },
-      'トヨタ': { symbol: '7203.T', name: 'トヨタ自動車', sector: '自動車' },
-      '7203': { symbol: '7203.T', name: 'トヨタ自動車', sector: '自動車' },
-      '三菱ufj': { symbol: '8306.T', name: '三菱UFJフィナンシャル・グループ', sector: '金融' },
-      '三菱フィナンシャル': { symbol: '8306.T', name: '三菱UFJフィナンシャル・グループ', sector: '金融' },
-      '8306': { symbol: '8306.T', name: '三菱UFJフィナンシャル・グループ', sector: '金融' },
-    };
-    let matched = null;
-    for (const [key, info] of Object.entries(stockLookup)) {
-      if (lowerText.includes(key.toLowerCase())) { matched = info; break; }
+    // マッチした全銘柄を収集（重複除去）
+    const matchedSymbols = new Set();
+    const matchedStocks = [];
+    for (const [key, info] of Object.entries(_stockLookup)) {
+      if (lowerText.includes(key.toLowerCase()) && !matchedSymbols.has(info.symbol)) {
+        matchedSymbols.add(info.symbol);
+        matchedStocks.push(info);
+      }
     }
-    if (matched) {
-      try {
-        const candidate = { symbol: matched.symbol, name: matched.name, sector: matched.sector, price: 0, reason: 'チャットから手動追加' };
-        addToWatchlist(candidate);
-        addSystemMessage(`✅ ${matched.name}（${matched.symbol}）をウォッチリストに追加しました！\n上のダッシュボードで確認できます。`);
+    if (matchedStocks.length > 0) {
+      const priceCache = JSON.parse(localStorage.getItem('kitt_investment_price_cache') || '{}');
+      const candidates = JSON.parse(localStorage.getItem('kitt_investment_candidates') || '[]');
+      const added = [], skipped = [];
+      for (const info of matchedStocks) {
+        try {
+          // 既存データ再利用（API呼び出し不要）
+          const cached = priceCache[info.symbol];
+          const fromCandidates = candidates.find(c => c.symbol === info.symbol);
+          const price = (cached && cached.price) ? parseFloat(cached.price)
+                      : (fromCandidates && fromCandidates.price) ? parseFloat(fromCandidates.price)
+                      : 0;
+          const candidate = { symbol: info.symbol, name: info.name, sector: info.sector, price, reason: 'チャットから手動追加' };
+          addToWatchlist(candidate);
+          added.push(`${info.name}（${info.symbol}）`);
+        } catch (e) {
+          skipped.push(`${info.name}: ${e.message}`);
+        }
+      }
+      if (added.length > 0) {
+        addSystemMessage(`✅ ウォッチリストに追加しました:\n${added.map(n => '  ・' + n).join('\n')}`);
         setTimeout(updateDashboard, 300);
-      } catch (e) {
-        addSystemMessage(`⚠️ ${e.message}`);
+      }
+      if (skipped.length > 0) {
+        addSystemMessage(`⚠️ 追加できなかった銘柄:\n${skipped.map(s => '  ・' + s).join('\n')}`);
       }
     } else {
-      // ウォッチリスト削除コマンド判定（「削除」「外して」）
-      if (lowerText.includes('削除') || lowerText.includes('外して') || lowerText.includes('消して')) {
-        // 削除はそのまま下の削除ロジックへ流す（fallthrough）
-      } else {
-        addSystemMessage('📋 対応銘柄が見つかりませんでした。\n対応例: 東電、ディスコ、スクリーン、インペックス、トヨタ など\nまたは「株の銘柄を探して」で候補一覧から「➕ウォッチ」ボタンを使ってください。');
+      addSystemMessage('📋 対応銘柄が見つかりませんでした。\n対応例: 東電、ディスコ、スクリーン、インペックス、トヨタ など\nまたは「株の銘柄を探して」で候補一覧から「➕ウォッチ」ボタンを使ってください。');
+    }
+  }
+
+  // ウォッチリスト削除コマンド（「XXXをウォッチリストから削除して」「XXXを外して」）
+  if ((lowerText.includes('ウォッチリスト') || lowerText.includes('ウォッチ')) &&
+      (lowerText.includes('削除') || lowerText.includes('外して') || lowerText.includes('消して') || lowerText.includes('抜いて'))) {
+    const matchedSymbols = new Set();
+    const matchedStocks = [];
+    for (const [key, info] of Object.entries(_stockLookup)) {
+      if (lowerText.includes(key.toLowerCase()) && !matchedSymbols.has(info.symbol)) {
+        matchedSymbols.add(info.symbol);
+        matchedStocks.push(info);
       }
+    }
+    if (matchedStocks.length > 0) {
+      const removed = [], notFound = [];
+      for (const info of matchedStocks) {
+        const wl = getWatchlist();
+        if (wl.some(item => item.ticker === info.symbol)) {
+          removeFromWatchlist(info.symbol);
+          removed.push(`${info.name}（${info.symbol}）`);
+        } else {
+          notFound.push(info.name);
+        }
+      }
+      if (removed.length > 0) {
+        addSystemMessage(`✅ ウォッチリストから削除しました:\n${removed.map(n => '  ・' + n).join('\n')}`);
+        setTimeout(updateDashboard, 300);
+      }
+      if (notFound.length > 0) {
+        addSystemMessage(`⚠️ ウォッチリストに登録されていない銘柄:\n${notFound.map(n => '  ・' + n).join('\n')}`);
+      }
+    } else {
+      addSystemMessage('📋 削除する銘柄が見つかりませんでした。\n対応例: 「トヨタをウォッチリストから削除して」「三菱UFJを外して」');
     }
   }
 
