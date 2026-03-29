@@ -2441,45 +2441,22 @@ JSON形式で回答してください。
 // ===== Phase 3: テクニカル分析 =====
 
 /**
- * 無料APIで過去データ取得（stooq優先 → corsproxy+Yahoo fallback）
- * 東証銘柄: 1605.T → stooq: 1605.jp
+ * 無料APIで過去データ取得（3段階フォールバック）
+ * ① query2.yahoo（直接CORS） → ② stooq.com（CSV） → 失敗なら例外
  */
 async function fetchDailyHistoryYahoo(ticker, months = 3) {
-  // ① stooq.com を試みる
-  const stooqSymbol = ticker.replace(/\.TYO$/, '').replace(/\.T$/, '') + '.jp';
-  const d2 = new Date();
-  const d1 = new Date();
-  d1.setMonth(d1.getMonth() - Math.max(months, 3) - 1);
-  const fmt = d => d.toISOString().split('T')[0].replace(/-/g, '');
-  const stooqUrl = `https://stooq.com/q/d/l/?s=${encodeURIComponent(stooqSymbol)}&d1=${fmt(d1)}&d2=${fmt(d2)}&i=d`;
+  const yhSymbol = ticker.replace(/\.TYO$/, '.T');
+  const range = months <= 1 ? '1mo' : months <= 3 ? '3mo' : months <= 6 ? '6mo' : '1y';
 
-  let res, useSource;
-  try {
-    res = await fetch(stooqUrl, { signal: AbortSignal.timeout(8000) });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    useSource = 'stooq';
-  } catch (e1) {
-    console.error('[stooq] fetch失敗、Yahoo Finance(proxy)にフォールバック:', e1.message);
-    // ② corsproxy.io 経由で Yahoo Finance v8 chart API を試みる
-    const yhSymbol = ticker.replace(/\.TYO$/, '.T');
-    const range = months <= 1 ? '1mo' : months <= 3 ? '3mo' : months <= 6 ? '6mo' : '1y';
-    const yhUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yhSymbol)}?interval=1d&range=${range}`;
-    const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(yhUrl)}`;
-    res = await fetch(proxyUrl, { signal: AbortSignal.timeout(10000) });
-    if (!res.ok) throw new Error(`Yahoo Finance proxy: HTTP ${res.status}`);
-    useSource = 'yahoo_proxy';
-  }
-
-  // stooqの場合はCSV、Yahoo(proxy)の場合はJSONを解析
-  if (useSource === 'yahoo_proxy') {
-    const data = await res.json();
+  // Yahoo Finance JSON レスポンスをパースして返すヘルパー
+  function parseYahooJson(data, src) {
     const result = data?.chart?.result?.[0];
-    if (!result) throw new Error('Yahoo Finance proxy: データなし');
+    if (!result) throw new Error(`${src}: データなし`);
     const timestamps = result.timestamp || [];
     const q = result.indicators?.quote?.[0] || {};
-    if (!timestamps.length) throw new Error('Yahoo Finance proxy: データ空');
+    if (!timestamps.length) throw new Error(`${src}: データ空`);
     const targetDays = Math.min(months * 22, timestamps.length);
-    const slice = (arr) => (arr || []).slice(-targetDays).map(v => v === null ? NaN : v);
+    const slice = (arr) => (arr || []).slice(-targetDays).map(v => (v == null ? NaN : v));
     const dates = timestamps.slice(-targetDays).map(t => new Date(t * 1000).toISOString().split('T')[0]);
     const closes = slice(q.close), highs = slice(q.high), lows = slice(q.low);
     const opens = slice(q.open), volumes = slice(q.volume);
@@ -2490,6 +2467,34 @@ async function fetchDailyHistoryYahoo(ticker, months = 3) {
       lows: filter(lows), opens: filter(opens), volumes: filter(volumes),
       fetchedAt: new Date().toISOString(), months, source: 'yahoo'
     };
+  }
+
+  // ① query2.finance.yahoo.com（query1より緩いCORSポリシー）
+  try {
+    const url = `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yhSymbol)}?interval=1d&range=${range}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    return parseYahooJson(data, 'query2.yahoo');
+  } catch (e1) {
+    console.error('[query2.yahoo] 失敗、stooqにフォールバック:', e1.message);
+  }
+
+  // ② stooq.com（CSV形式、APIキー不要）
+  const stooqSymbol = ticker.replace(/\.TYO$/, '').replace(/\.T$/, '') + '.jp';
+  const d2 = new Date();
+  const d1 = new Date();
+  d1.setMonth(d1.getMonth() - Math.max(months, 3) - 1);
+  const fmt = d => d.toISOString().split('T')[0].replace(/-/g, '');
+  const stooqUrl = `https://stooq.com/q/d/l/?s=${encodeURIComponent(stooqSymbol)}&d1=${fmt(d1)}&d2=${fmt(d2)}&i=d`;
+
+  let res;
+  try {
+    res = await fetch(stooqUrl, { signal: AbortSignal.timeout(8000) });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  } catch (e2) {
+    console.error('[stooq] fetch失敗:', e2.message);
+    throw new Error(`データ取得失敗 (Yahoo/stooq両方失敗): ${e2.message}`);
   }
 
   const text = await res.text();
