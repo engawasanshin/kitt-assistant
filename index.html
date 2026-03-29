@@ -1629,44 +1629,63 @@ function toAvSymbol(symbol) {
  * Alpha Vantage APIで株価取得（GLOBAL_QUOTE）
  */
 async function fetchStockQuote(symbol) {
+  // ① stooq.com で株価取得（無料・CORS対応・APIキー不要）
+  try {
+    const stooqSymbol = symbol.replace(/\.TYO$/, '').replace(/\.T$/, '') + '.jp';
+    const url = `https://stooq.com/q/l/?s=${encodeURIComponent(stooqSymbol)}&f=sd2ohlcvp`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`stooq HTTP ${res.status}`);
+    const text = await res.text();
+    const lines = text.trim().split('\n');
+    if (lines.length >= 2) {
+      // CSV: Symbol,Date,Open,High,Low,Close,Volume,% Change
+      const cols = lines[1].split(',');
+      const close = parseFloat(cols[5]);
+      const changePercent = cols[7] ? cols[7].trim() : '0';
+      if (!isNaN(close) && close > 0) {
+        return {
+          symbol,
+          price: cols[5].trim(),
+          change: null,
+          changePercent: changePercent + '%',
+          source: 'stooq'
+        };
+      }
+    }
+    throw new Error('stooq: 有効データなし');
+  } catch (stooqErr) {
+    console.warn('[stooq] 株価取得失敗、Alpha Vantageにフォールバック:', stooqErr.message);
+  }
+
+  // ② Alpha Vantage フォールバック
   const apiKey = await loadAlphaVantageApiKey();
-  console.log('[DEBUG] Alpha Vantage API Key length:', apiKey ? apiKey.length : 'null');
   if (!apiKey) {
-    throw new Error('Alpha Vantage APIキーが設定されていません');
+    throw new Error('株価取得失敗（stooq・Alpha Vantage両方）');
   }
 
   const avSymbol = toAvSymbol(symbol);
   const url = `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${avSymbol}&apikey=${apiKey}`;
-  console.log('[DEBUG] Fetching:', url.replace(apiKey, 'REDACTED'));
 
   const res = await fetch(url);
-  console.log('[DEBUG] Response status:', res.status);
-  if (!res.ok) {
-    throw new Error(`Alpha Vantage API Error: ${res.status}`);
-  }
+  if (!res.ok) throw new Error(`Alpha Vantage API Error: ${res.status}`);
 
   const data = await res.json();
-  console.log('[DEBUG] Response data:', data);
-
-  if (data['Error Message']) {
-    throw new Error(data['Error Message']);
-  }
-  if (data['Note']) {
+  if (data['Error Message']) throw new Error(data['Error Message']);
+  if (data['Note'] || data['Information']) {
     throw new Error('Alpha Vantage API制限に到達しました（無料プランは5リクエスト/分、500リクエスト/日）');
   }
 
-  recordAvCall(); // APIコール回数を記録
+  recordAvCall();
 
   const quote = data['Global Quote'];
-  if (!quote) {
-    throw new Error(`銘柄データが見つかりません: ${symbol}`);
-  }
+  if (!quote) throw new Error(`銘柄データが見つかりません: ${symbol}`);
 
   return {
     symbol: quote['01. symbol'],
     price: quote['05. price'],
     change: quote['09. change'],
-    changePercent: quote['10. change percent']
+    changePercent: quote['10. change percent'],
+    source: 'alphavantage'
   };
 }
 
@@ -2415,55 +2434,62 @@ JSON形式で回答してください。
 // ===== Phase 3: テクニカル分析 =====
 
 /**
- * Yahoo Finance APIで過去データ取得（無料・APIキー不要・CORS対応）
- * 東証銘柄: 1605.T, 7203.T など .T サフィックス
+ * stooq.com APIで過去データ取得（無料・APIキー不要・CORS対応・日本株完全対応）
+ * 東証銘柄: 1605.T → 1605.jp に変換
  */
 async function fetchDailyHistoryYahoo(ticker, months = 3) {
-  const range = months <= 1 ? '1mo' : months <= 3 ? '3mo' : months <= 6 ? '6mo' : '1y';
-  // Yahoo Financeは .T サフィックスをそのまま使用
-  const yhSymbol = ticker.replace(/\.TYO$/, '.T'); // .TYOなら.Tに変換
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yhSymbol)}?interval=1d&range=${range}`;
+  // stooq.comは .jp サフィックスで日本株を取得（CORSヘッダーあり）
+  const stooqSymbol = ticker.replace(/\.TYO$/, '').replace(/\.T$/, '') + '.jp';
+
+  // 取得期間の日付範囲を計算
+  const d2 = new Date();
+  const d1 = new Date();
+  d1.setMonth(d1.getMonth() - Math.max(months, 3) - 1); // 余裕を持って1ヶ月多く取得
+  const fmt = d => d.toISOString().split('T')[0].replace(/-/g, '');
+  const url = `https://stooq.com/q/d/l/?s=${encodeURIComponent(stooqSymbol)}&d1=${fmt(d1)}&d2=${fmt(d2)}&i=d`;
 
   const res = await fetch(url);
-  if (!res.ok) throw new Error(`Yahoo Finance: HTTP ${res.status}`);
+  if (!res.ok) throw new Error(`stooq: HTTP ${res.status}`);
 
-  const data = await res.json();
-  const result = data?.chart?.result?.[0];
-  if (!result) throw new Error(`Yahoo Finance: ${yhSymbol}のデータがありません`);
+  const text = await res.text();
+  const lines = text.trim().split('\n');
+  // ヘッダー行の確認（Date,Open,High,Low,Close,Volume）
+  if (lines.length < 2 || lines[0].toLowerCase().includes('no data')) {
+    throw new Error(`stooq: ${stooqSymbol}のデータがありません`);
+  }
 
-  const timestamps = result.timestamp || [];
-  const q = result.indicators?.quote?.[0] || {};
-  if (!timestamps.length) throw new Error(`Yahoo Finance: ${yhSymbol}のデータが空です`);
+  // CSV解析（stooqは昇順で返す）
+  const rows = lines.slice(1).map(line => {
+    const [date, open, high, low, close, volume] = line.split(',');
+    return {
+      date: date.trim(),
+      open: parseFloat(open), high: parseFloat(high),
+      low: parseFloat(low), close: parseFloat(close),
+      volume: parseInt(volume) || 0
+    };
+  }).filter(r => r.date && !isNaN(r.close) && r.close > 0);
 
-  const targetDays = Math.min(months * 22, timestamps.length);
-  const slice = (arr) => (arr || []).slice(-targetDays).map(v => v === null ? NaN : v);
+  if (!rows.length) throw new Error(`stooq: ${stooqSymbol}の有効データがありません`);
 
-  const dates   = timestamps.slice(-targetDays).map(t => new Date(t * 1000).toISOString().split('T')[0]);
-  const closes  = slice(q.close);
-  const highs   = slice(q.high);
-  const lows    = slice(q.low);
-  const opens   = slice(q.open);
-  const volumes = slice(q.volume);
-
-  // NaNが含まれるデータを除去
-  const valid = dates.map((_, i) => !isNaN(closes[i]));
-  const filter = arr => arr.filter((_, i) => valid[i]);
+  // 最新 months * 22 営業日分に絞る
+  const targetDays = months * 22;
+  const recent = rows.slice(-targetDays);
 
   return {
     ticker,
-    dates:   filter(dates),
-    closes:  filter(closes),
-    highs:   filter(highs),
-    lows:    filter(lows),
-    opens:   filter(opens),
-    volumes: filter(volumes),
+    dates:   recent.map(r => r.date),
+    closes:  recent.map(r => r.close),
+    highs:   recent.map(r => r.high),
+    lows:    recent.map(r => r.low),
+    opens:   recent.map(r => r.open),
+    volumes: recent.map(r => r.volume),
     fetchedAt: new Date().toISOString(),
     months,
-    source: 'yahoo'
+    source: 'stooq'
   };
 }
 
-// 過去株価データを取得・キャッシュ（Yahoo Finance優先、Alpha Vantageフォールバック）
+// 過去株価データを取得・キャッシュ（stooq優先、Alpha Vantageフォールバック）
 const _avPendingFetches = {};
 
 async function fetchDailyHistory(ticker, months = 3) {
@@ -2498,14 +2524,14 @@ async function fetchDailyHistory(ticker, months = 3) {
   // フェッチ実行（並列リクエスト防止マップに登録）
   const fetchPromise = (async () => {
     try {
-      // ① Yahoo Finance を優先（無料・APIキー不要・日本株対応）
+      // ① stooq を優先（無料・APIキー不要・CORS対応・日本株完全対応）
       try {
         const hist = await fetchDailyHistoryYahoo(ticker, months);
         cache[ticker] = hist;
         localStorage.setItem(cacheKey, JSON.stringify(cache));
         return hist;
       } catch (yhErr) {
-        console.warn('[Yahoo Finance] 失敗、Alpha Vantageにフォールバック:', yhErr.message);
+        console.warn('[stooq] 失敗、Alpha Vantageにフォールバック:', yhErr.message);
       }
 
       // ② Alpha Vantage フォールバック
@@ -2701,7 +2727,7 @@ async function handleTechnicalAnalysis(ticker) {
     const ind = result.indicators;
 
     // チャートデータを保存（再表示用）
-    const sourceLabel = result.hist.source === 'yahoo' ? ' [Yahoo Finance]' : result.hist.source === 'alphavantage' ? ' [Alpha Vantage]' : '';
+    const sourceLabel = result.hist.source === 'stooq' ? ' [stooq]' : result.hist.source === 'yahoo' ? ' [Yahoo Finance]' : result.hist.source === 'alphavantage' ? ' [Alpha Vantage]' : '';
     const chartTitle = `📈 ${name}（${ticker}） テクニカル分析${sourceLabel}`;
     _lastChartState = { hist: result.hist, indicators: ind, title: chartTitle };
 
