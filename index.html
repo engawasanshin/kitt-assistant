@@ -1341,7 +1341,7 @@ window.addEventListener('load', async () => {
     addSystemMessage('APIキーを設定してください（右上の歯車アイコン）');
   } else {
     if (chatHistory.length === 0) {
-      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。');
+      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-03-29d / stooq]');
     } else {
       restoreHistory();
     }
@@ -1654,7 +1654,7 @@ async function fetchStockQuote(symbol) {
     }
     throw new Error('stooq: 有効データなし');
   } catch (stooqErr) {
-    console.warn('[stooq] 株価取得失敗、Alpha Vantageにフォールバック:', stooqErr.message);
+    console.error('[stooq] 株価取得失敗、Alpha Vantageにフォールバック:', stooqErr.message);
   }
 
   // ② Alpha Vantage フォールバック
@@ -1788,7 +1788,7 @@ async function saveSettings() {
 
   closeSettings();
   if (chatHistory.length === 0 && apiKey) {
-    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。');
+    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-03-29d / stooq]');
   }
 }
 
@@ -2099,13 +2099,20 @@ async function updateWatchlist() {
     }
   }
 
-  localStorage.setItem('kitt_investment_watchlist', JSON.stringify(watchlist));
+  // 競合状態対策: 処理中に追加された銘柄を失わないよう
+  // 現在のlocalStorageを再読み込みして価格更新分だけをマージ
+  const currentWatchlist = JSON.parse(localStorage.getItem('kitt_investment_watchlist') || '[]');
+  const updatedTickers = new Map(watchlist.map(item => [item.ticker, item]));
+  const merged = currentWatchlist.map(item =>
+    updatedTickers.has(item.ticker) ? updatedTickers.get(item.ticker) : item
+  );
+  localStorage.setItem('kitt_investment_watchlist', JSON.stringify(merged));
   localStorage.setItem('kitt_investment_price_cache', JSON.stringify(cache));
 
   return {
     updated: updatedCount,
-    total: watchlist.length,
-    message: `${updatedCount}/${watchlist.length}件の銘柄を更新しました`
+    total: merged.length,
+    message: `${updatedCount}/${merged.length}件の銘柄を更新しました`
   };
 }
 
@@ -2531,7 +2538,7 @@ async function fetchDailyHistory(ticker, months = 3) {
         localStorage.setItem(cacheKey, JSON.stringify(cache));
         return hist;
       } catch (yhErr) {
-        console.warn('[stooq] 失敗、Alpha Vantageにフォールバック:', yhErr.message);
+        console.error('[stooq] 失敗、Alpha Vantageにフォールバック:', yhErr.message);
       }
 
       // ② Alpha Vantage フォールバック
