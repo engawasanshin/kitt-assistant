@@ -2062,10 +2062,10 @@ async function updateWatchlist() {
         continue;
       }
 
-      // API制限を考慮して13秒待機（5req/分 → 各銘柄を別の分散ウィンドウで処理）
-      await new Promise(r => setTimeout(r, 13000));
+      // stooqへの礼儀として1秒待機（連続リクエスト防止）
+      await new Promise(r => setTimeout(r, 1000));
 
-      // 株価取得
+      // 株価取得（stooq優先・AV fallback）
       const quote = await fetchStockQuote(item.ticker);
 
       item.currentPrice = parseFloat(quote.price);
