@@ -1384,6 +1384,9 @@ function addSystemMessage(text) {
   div.textContent = text;
   chatArea.appendChild(div);
   chatArea.scrollTop = chatArea.scrollHeight;
+  // エクスポート・分析に含めるためchatHistoryにも記録
+  chatHistory.push({ role: 'system', text, timestamp: Date.now() });
+  saveHistory();
 }
 
 // ボタン付きシステムメッセージ（チャート表示リンクなど）
@@ -3268,12 +3271,17 @@ async function conversationToMarkdown(location = null, startIndex = 0, contextSi
   md += `## 会話\n\n`;
   exportMessages.forEach((msg, idx) => {
     const time = msg.timestamp ? formatTime(msg.timestamp) : '';
-    const speaker = msg.role === 'user' ? 'You' : 'K.I.T.T.';
     const timestamp = time ? `[${time}] ` : '';
     // Mark context messages
     const isContext = startIndex > 0 && (actualStartIndex + idx) < startIndex;
     const contextMarker = isContext ? '_(文脈)_ ' : '';
-    md += `**${timestamp}${speaker}:** ${contextMarker}\n${msg.text}\n\n`;
+    if (msg.role === 'system') {
+      // システムメッセージ（エラー・分析ログ）
+      md += `**${timestamp}SYSTEM:** ${contextMarker}\n${msg.text}\n\n`;
+    } else {
+      const speaker = msg.role === 'user' ? 'You' : 'K.I.T.T.';
+      md += `**${timestamp}${speaker}:** ${contextMarker}\n${msg.text}\n\n`;
+    }
   });
 
   return { md, id, created, newMessagesCount, contextMessagesCount };
