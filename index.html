@@ -1345,7 +1345,7 @@ window.addEventListener('load', async () => {
     addSystemMessage('APIキーを設定してください（右上の歯車アイコン）');
   } else {
     if (chatHistory.length === 0) {
-      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-03-30c / stooq+proxy2]');
+      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-03-30d / stooq+proxy5]');
     } else {
       restoreHistory();
     }
@@ -1814,7 +1814,7 @@ async function saveSettings() {
 
   closeSettings();
   if (chatHistory.length === 0 && apiKey) {
-    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-03-30c / stooq+proxy2]');
+    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-03-30d / stooq+proxy5]');
   }
 }
 
@@ -2514,44 +2514,37 @@ async function fetchDailyHistoryYahoo(ticker, months = 3) {
   const fmt = d => d.toISOString().split('T')[0].replace(/-/g, '');
   const stooqUrl = `https://stooq.com/q/d/l/?s=${encodeURIComponent(stooqSymbol)}&d1=${fmt(d1)}&d2=${fmt(d2)}&i=d`;
 
-  let res;
-  // stooq はCORSヘッダーなしの場合があるため、直接→プロキシの順で試みる
-  let stooqFetchErr = null;
-  try {
-    res = await fetch(stooqUrl, { signal: AbortSignal.timeout(8000) });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  } catch (e2) {
-    stooqFetchErr = e2;
-    console.error('[stooq] direct失敗、alloriginsプロキシを試みます:', e2.message);
-  }
+  // CORSプロキシリスト（直接 → 複数プロキシの順で試みる）
+  const stooqProxies = [
+    u => u,                                                                   // 直接
+    u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,       // allorigins
+    u => `https://corsproxy.io/?${encodeURIComponent(u)}`,                    // corsproxy.io
+    u => `https://thingproxy.freeboard.io/fetch/${u}`,                        // thingproxy
+    u => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(u)}`, // codetabs
+  ];
 
-  if (!res) {
-    // allorigins.win: 軽量CORSプロキシ（生コンテンツ返却）
+  let csvText = null;
+  for (const makeProxy of stooqProxies) {
+    const proxyUrl = makeProxy(stooqUrl);
     try {
-      const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(stooqUrl)}`;
-      const r = await fetch(proxyUrl, { signal: AbortSignal.timeout(12000) });
-      if (!r.ok) throw new Error(`allorigins HTTP ${r.status}`);
-      res = r;
-    } catch (e3) {
-      console.error('[stooq] allorigins失敗、corsproxy.ioを試みます:', e3.message);
+      const r = await fetch(proxyUrl, { signal: AbortSignal.timeout(10000) });
+      if (!r.ok) { console.error(`[stooq] ${proxyUrl.slice(0,40)} HTTP ${r.status}`); continue; }
+      const t = await r.text();
+      // HTMLレスポンス（エラーページ等）を除外、CSVとして有効か確認
+      if (t.length > 30 && !t.trim().startsWith('<') && t.includes(',')) {
+        csvText = t;
+        console.log(`[stooq] 成功: ${proxyUrl.slice(0, 50)}`);
+        break;
+      }
+      console.error(`[stooq] 無効レスポンス: ${t.slice(0, 80)}`);
+    } catch (ex) {
+      console.error(`[stooq] ${proxyUrl.slice(0, 40)} 失敗: ${ex.message}`);
     }
   }
 
-  if (!res) {
-    // corsproxy.io: CSV(<10KB)なら切り詰めなし
-    try {
-      const proxyUrl2 = `https://corsproxy.io/?${encodeURIComponent(stooqUrl)}`;
-      const r = await fetch(proxyUrl2, { signal: AbortSignal.timeout(12000) });
-      if (!r.ok) throw new Error(`corsproxy HTTP ${r.status}`);
-      res = r;
-    } catch (e4) {
-      console.error('[stooq] corsproxy失敗:', e4.message);
-      throw new Error(`データ取得失敗 (stooq全プロキシ失敗): ${stooqFetchErr?.message}`);
-    }
-  }
+  if (!csvText) throw new Error(`stooq: ${stooqSymbol}のデータ取得に失敗しました（全プロキシ試行済み）`);
 
-  const text = await res.text();
-  const lines = text.trim().split('\n');
+  const lines = csvText.trim().split('\n');
   // ヘッダー行の確認（Date,Open,High,Low,Close,Volume）
   if (lines.length < 2 || lines[0].toLowerCase().includes('no data')) {
     throw new Error(`stooq: ${stooqSymbol}のデータがありません`);
