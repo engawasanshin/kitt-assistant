@@ -1333,6 +1333,11 @@ function checkExportPrompt() {
 
 // --- Init ---
 window.addEventListener('load', async () => {
+  // 起動時: 壊れた履歴キャッシュを自動検出・クリア
+  try { JSON.parse(localStorage.getItem('kitt_historical_data') || '{}'); } catch(e) {
+    console.error('[init] 破損キャッシュ自動クリア:', e.message);
+    localStorage.removeItem('kitt_historical_data');
+  }
   updateApiCounterUI();
   updateAvCounterUI();
   await Promise.all([loadStatusContext(), loadKittMemory()]);
@@ -1341,7 +1346,7 @@ window.addEventListener('load', async () => {
     addSystemMessage('APIキーを設定してください（右上の歯車アイコン）');
   } else {
     if (chatHistory.length === 0) {
-      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-03-29d / stooq]');
+      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-03-30a / stooq]');
     } else {
       restoreHistory();
     }
@@ -1788,7 +1793,7 @@ async function saveSettings() {
 
   closeSettings();
   if (chatHistory.length === 0 && apiKey) {
-    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-03-29d / stooq]');
+    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-03-30a / stooq]');
   }
 }
 
@@ -2540,7 +2545,15 @@ const _avPendingFetches = {};
 
 async function fetchDailyHistory(ticker, months = 3) {
   const cacheKey = 'kitt_historical_data';
-  const cache = JSON.parse(localStorage.getItem(cacheKey) || '{}');
+  let cache;
+  try {
+    cache = JSON.parse(localStorage.getItem(cacheKey) || '{}');
+  } catch (parseErr) {
+    // 壊れたキャッシュを検出→自動クリア（corsproxy切り詰めJSONなど）
+    console.error('[cache] kitt_historical_data 破損、自動クリア:', parseErr.message);
+    localStorage.removeItem(cacheKey);
+    cache = {};
+  }
   const today = getToday();
 
   // 当日取得済みキャッシュがあれば即時返す（API呼び出し不要）
@@ -2809,7 +2822,9 @@ async function handleTechnicalAnalysis(ticker) {
       setTimeout(openSettings, 1000);
     } else if (err.message.includes('API制限')) {
       // キャッシュがあれば古いデータでもチャートを描画する
-      const staleCache = JSON.parse(localStorage.getItem('kitt_historical_data') || '{}')[ticker];
+      let _staleCacheAll;
+      try { _staleCacheAll = JSON.parse(localStorage.getItem('kitt_historical_data') || '{}'); } catch(e) { _staleCacheAll = {}; localStorage.removeItem('kitt_historical_data'); }
+      const staleCache = _staleCacheAll[ticker];
       if (staleCache && staleCache.dates && staleCache.dates.length > 10) {
         const cacheDate = staleCache.fetchedAt ? staleCache.fetchedAt.split('T')[0] : '不明';
         addSystemMessage(`⚠️ API制限中のため、キャッシュデータ（${cacheDate}）でチャートを表示します。`);
@@ -5099,6 +5114,16 @@ function analyzeAndRecord(text) {
       msg += '\n【エラーログ】直近エラーなし ✅\n';
     }
     addSystemMessage(msg);
+    return;
+  }
+
+  // キャッシュリセットコマンド（「キャッシュリセット」「履歴データ消して」「テクニカルキャッシュ削除」）
+  if (lowerText.includes('キャッシュリセット') || lowerText.includes('キャッシュ削除') ||
+      (lowerText.includes('履歴') && lowerText.includes('データ') && (lowerText.includes('消') || lowerText.includes('リセット'))) ||
+      (lowerText.includes('テクニカル') && (lowerText.includes('キャッシュ') || lowerText.includes('データ')) && (lowerText.includes('消') || lowerText.includes('削除') || lowerText.includes('リセット')))) {
+    localStorage.removeItem('kitt_historical_data');
+    localStorage.removeItem('kitt_investment_price_cache');
+    addSystemMessage('🗑️ テクニカル分析キャッシュ・価格キャッシュをクリアしました。\n次回テクニカル分析時に新規データを取得します。');
     return;
   }
 
