@@ -750,7 +750,18 @@ const DEFAULT_SYSTEM_PROMPT = `あなたはK.I.T.T.（Knight Industries Two Thou
 - データ（localStorage）があるのに推測で答えること
 - 記録がないのに「以前〜とおっしゃっていましたね」と断定すること
 - 「記憶には〜とあります」と実際には存在しない記録を捏造すること
-- ウォッチリストへの追加・削除を「しました」と言うこと（KITTはlocalStorageを操作できない）`;
+- ウォッチリストへの追加・削除を「しました」と言うこと（KITTはlocalStorageを操作できない）
+
+【テクニカル分析・株価情報について（最重要）】
+テクニカル分析とチャート表示はアプリが担当します。あなた（会話AI）は絶対に以下を行ってはいけません：
+- 株価の具体的な数値（例: 9,119円、16,500円など）を生成・回答すること
+- 移動平均、ボリンジャーバンド、RSIなどの指標値を計算・提示すること
+- アスキーアートや擬似チャートを描くこと
+- 「上昇トレンドです」「下降トレンドです」など架空の分析結果を述べること
+- 「分析しています...」と演出してから架空のデータを提示すること
+
+ユーザーがテクニカル分析や株価チャートに関して話しかけてきた場合（「〜の分析ができた」「成功した」「すごい」など）は、アプリのチャートを褒める・会話する程度にとどめ、具体的な数値や分析結果は一切提示しないこと。
+正しいデータはアプリのウォッチリスト経由でのみ取得・表示されます。`;
 
 const GEMINI_MODEL = 'gemini-2.5-flash';  // 有料版（プライバシー保護、学習されない）
 
@@ -1345,7 +1356,7 @@ window.addEventListener('load', async () => {
     addSystemMessage('APIキーを設定してください（右上の歯車アイコン）');
   } else {
     if (chatHistory.length === 0) {
-      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-03-30e / yahoo+proxy8]');
+      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-03-30f / no-fake-analysis]');
     } else {
       restoreHistory();
     }
@@ -1814,7 +1825,7 @@ async function saveSettings() {
 
   closeSettings();
   if (chatHistory.length === 0 && apiKey) {
-    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-03-30e / yahoo+proxy8]');
+    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-03-30f / no-fake-analysis]');
   }
 }
 
