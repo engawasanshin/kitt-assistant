@@ -1345,7 +1345,7 @@ window.addEventListener('load', async () => {
     addSystemMessage('APIキーを設定してください（右上の歯車アイコン）');
   } else {
     if (chatHistory.length === 0) {
-      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-03-30a / stooq]');
+      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-03-30b / stooq+proxy]');
     } else {
       restoreHistory();
     }
@@ -1814,7 +1814,7 @@ async function saveSettings() {
 
   closeSettings();
   if (chatHistory.length === 0 && apiKey) {
-    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-03-30a / stooq]');
+    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-03-30b / stooq+proxy]');
   }
 }
 
