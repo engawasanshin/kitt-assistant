@@ -1192,8 +1192,7 @@ function getAppStateContext() {
   // 重要な制約
   ctx += '\n【データ参照ルール】\n';
   ctx += '- 上記「ウォッチリスト実態」が唯一の真実。推測・記憶で補完してはいけない。📊マークで参照すること。\n';
-  ctx += '- K.I.T.T.はlocalStorageを操作できない。「追加しました」は絶対に言わないこと。\n';
-  ctx += '- ウォッチリスト変更を求められたら: 「チャット入力欄に「東電をウォッチリストに追加して」と入力してください」と案内する。\n';
+  ctx += '- ウォッチリスト追加/削除/テクニカル分析などのコマンドはローカル処理済みのため、このメッセージには届かない。もし届いた場合は「処理済みのはずです」と答える。\n';
   ctx += '- 対応チャットコマンド: 東電/9501、ディスコ/6146、スクリーン/7735、インペックス/1605、トヨタ/7203、三菱UFJ/8306\n';
   ctx += '- 実態にない銘柄を「登録済み」と言うことは厳禁。\n';
 
@@ -1446,10 +1445,32 @@ async function sendMessage() {
   // ユーザーメッセージを分析して自動記録
   analyzeAndRecord(text);
 
+  // ローカルコマンドで処理すべきパターン → Geminiをスキップ
+  // （analyzeAndRecordが処理し済み。Geminiが「未実装」と誤回答するのを防ぐ）
+  const _lc = text.toLowerCase();
+  const _isLocalCmd = (
+    ((_lc.includes('ウォッチ') || _lc.includes('ウォッチリスト')) &&
+     /追加|登録|入れて|加えて|削除|外して|消して|抜いて|確認|状態|見せて|表示/.test(_lc)) ||
+    /キャッシュリセット|キャッシュ削除/.test(_lc) ||
+    /自己チェック|状態診断/.test(_lc) ||
+    ((_lc.includes('テクニカル') || _lc.includes('チャート分析') || _lc.includes('移動平均') ||
+      _lc.includes('ボリンジャー') || _lc.includes('グラフ')) &&
+     (_lc.includes('分析') || _lc.includes('描いて') || _lc.includes('見せて') || _lc.includes('お願い')))
+  );
+
   const sendBtn = document.getElementById('sendBtn');
   sendBtn.disabled = true;
   const typing = document.getElementById('typingIndicator');
   typing.classList.add('active');
+
+  if (_isLocalCmd) {
+    // ローカル処理のみ（Gemini不要）
+    typing.classList.remove('active');
+    sendBtn.disabled = false;
+    input.focus();
+    setTimeout(updateDashboard, 500);
+    return;
+  }
 
   try {
     const response = await callGemini(text);
