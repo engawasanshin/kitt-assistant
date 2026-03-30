@@ -1345,7 +1345,7 @@ window.addEventListener('load', async () => {
     addSystemMessage('APIキーを設定してください（右上の歯車アイコン）');
   } else {
     if (chatHistory.length === 0) {
-      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-03-30b / stooq+proxy]');
+      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-03-30c / stooq+proxy2]');
     } else {
       restoreHistory();
     }
@@ -1814,7 +1814,7 @@ async function saveSettings() {
 
   closeSettings();
   if (chatHistory.length === 0 && apiKey) {
-    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-03-30b / stooq+proxy]');
+    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-03-30c / stooq+proxy2]');
   }
 }
 
@@ -2526,14 +2526,27 @@ async function fetchDailyHistoryYahoo(ticker, months = 3) {
   }
 
   if (!res) {
-    // allorigins.win: 軽量CORSプロキシ（CSVなど小容量向け、切り詰めなし）
+    // allorigins.win: 軽量CORSプロキシ（生コンテンツ返却）
     try {
       const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(stooqUrl)}`;
-      res = await fetch(proxyUrl, { signal: AbortSignal.timeout(12000) });
-      if (!res.ok) throw new Error(`allorigins HTTP ${res.status}`);
+      const r = await fetch(proxyUrl, { signal: AbortSignal.timeout(12000) });
+      if (!r.ok) throw new Error(`allorigins HTTP ${r.status}`);
+      res = r;
     } catch (e3) {
-      console.error('[stooq-proxy] allorigins失敗:', e3.message);
-      throw new Error(`データ取得失敗 (stooq直接/プロキシ両方失敗): ${stooqFetchErr?.message}`);
+      console.error('[stooq] allorigins失敗、corsproxy.ioを試みます:', e3.message);
+    }
+  }
+
+  if (!res) {
+    // corsproxy.io: CSV(<10KB)なら切り詰めなし
+    try {
+      const proxyUrl2 = `https://corsproxy.io/?${encodeURIComponent(stooqUrl)}`;
+      const r = await fetch(proxyUrl2, { signal: AbortSignal.timeout(12000) });
+      if (!r.ok) throw new Error(`corsproxy HTTP ${r.status}`);
+      res = r;
+    } catch (e4) {
+      console.error('[stooq] corsproxy失敗:', e4.message);
+      throw new Error(`データ取得失敗 (stooq全プロキシ失敗): ${stooqFetchErr?.message}`);
     }
   }
 
@@ -2654,7 +2667,8 @@ async function fetchDailyHistory(ticker, months = 3) {
         if (!res.ok) throw new Error(`Alpha Vantage API Error: ${res.status}`);
         const d = await res.json();
         recordAvCall();
-        if (d['Note'] || d['Information']) throw new Error('Alpha Vantage API制限（5リクエスト/分、500/日）');
+        if (d['Note']) throw new Error('API制限: stooqデータ取得に失敗しAVにフォールバックしましたが、分間制限（5回/分）に達しました。1分待って再試行してください。');
+        if (d['Information']) throw new Error('API制限: stooqデータ取得に失敗しAVにフォールバックしましたが、日次上限に達しました。stooqプロキシの修正が必要です。');
         if (d['Error Message']) {
           if (sym !== symbolsToTry[symbolsToTry.length - 1]) continue;
           throw new Error(`データ取得失敗: Yahoo Finance・Alpha Vantage両方で取得できませんでした`);
