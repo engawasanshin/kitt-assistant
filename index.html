@@ -2515,12 +2515,26 @@ async function fetchDailyHistoryYahoo(ticker, months = 3) {
   const stooqUrl = `https://stooq.com/q/d/l/?s=${encodeURIComponent(stooqSymbol)}&d1=${fmt(d1)}&d2=${fmt(d2)}&i=d`;
 
   let res;
+  // stooq はCORSヘッダーなしの場合があるため、直接→プロキシの順で試みる
+  let stooqFetchErr = null;
   try {
     res = await fetch(stooqUrl, { signal: AbortSignal.timeout(8000) });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
   } catch (e2) {
-    console.error('[stooq] fetch失敗:', e2.message);
-    throw new Error(`データ取得失敗 (Yahoo/stooq両方失敗): ${e2.message}`);
+    stooqFetchErr = e2;
+    console.error('[stooq] direct失敗、alloriginsプロキシを試みます:', e2.message);
+  }
+
+  if (!res) {
+    // allorigins.win: 軽量CORSプロキシ（CSVなど小容量向け、切り詰めなし）
+    try {
+      const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(stooqUrl)}`;
+      res = await fetch(proxyUrl, { signal: AbortSignal.timeout(12000) });
+      if (!res.ok) throw new Error(`allorigins HTTP ${res.status}`);
+    } catch (e3) {
+      console.error('[stooq-proxy] allorigins失敗:', e3.message);
+      throw new Error(`データ取得失敗 (stooq直接/プロキシ両方失敗): ${stooqFetchErr?.message}`);
+    }
   }
 
   const text = await res.text();
