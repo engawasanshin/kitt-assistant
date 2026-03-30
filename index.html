@@ -2745,7 +2745,7 @@ ${r(sma5).join(', ')}
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
     generationConfig: {
       temperature: 0.3,
-      maxOutputTokens: 2048,
+      maxOutputTokens: 4096,
       responseMimeType: 'application/json',
       responseSchema: {
         type: 'object',
@@ -2770,8 +2770,18 @@ ${r(sma5).join(', ')}
   });
 
   const data = res._parsedData || await res.json();
-  const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
-  const analysis = JSON.parse(rawText);
+  const candidate = data.candidates?.[0];
+  if (candidate?.finishReason === 'MAX_TOKENS') {
+    throw new Error('Gemini応答がトークン上限で切断されました。しばらく待って再試行してください。');
+  }
+  const rawText = candidate?.content?.parts?.[0]?.text || '{}';
+  let analysis;
+  try {
+    analysis = JSON.parse(rawText);
+  } catch (parseErr) {
+    console.error('[gemini] JSON parse失敗, rawText先頭:', rawText.slice(0, 200));
+    throw new Error(`Gemini応答のJSON解析に失敗しました: ${parseErr.message}`);
+  }
 
   // 分析履歴を保存
   const history = JSON.parse(localStorage.getItem('kitt_technical_analysis_history') || '[]');
