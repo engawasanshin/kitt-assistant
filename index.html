@@ -2218,7 +2218,7 @@ function displayWatchlist(watchlist) {
         <div style="border: 1px solid #2a2a2a; border-radius: 6px; padding: 8px; margin-bottom: 6px; background: #1a1a1a;">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
             <div>
-              <span style="font-weight: bold; color: #ff8866;">${item.name || item.ticker}</span>
+              <span style="font-weight: bold; color: #ff8866;">${item.name || TICKER_NAMES[item.ticker] || item.ticker}</span>
               <span style="font-size: 11px; color: #888; margin-left: 6px;">${item.ticker}</span>
             </div>
             <div style="display: flex; gap: 4px;">
@@ -2540,6 +2540,16 @@ async function fetchDailyHistoryYahoo(ticker, months = 3) {
   };
 }
 
+// ticker → 銘柄名の逆引きマップ（name未設定のウォッチリストエントリ補完用）
+const TICKER_NAMES = {
+  '9501.T': '東京電力ホールディングス',
+  '6146.T': 'ディスコ',
+  '7735.T': 'SCREENホールディングス',
+  '1605.T': 'INPEX',
+  '7203.T': 'トヨタ自動車',
+  '8306.T': '三菱UFJフィナンシャル・グループ',
+};
+
 // 過去株価データを取得・キャッシュ（stooq優先、Alpha Vantageフォールバック）
 const _avPendingFetches = {};
 
@@ -2777,7 +2787,7 @@ async function handleTechnicalAnalysis(ticker) {
   try {
     const watchlist = getWatchlist();
     const stock = watchlist.find(s => s.ticker === ticker);
-    const name = stock ? stock.name : ticker;
+    const name = (stock && stock.name) ? stock.name : (TICKER_NAMES[ticker] || ticker);
 
     addSystemMessage(`📈 ${name}（${ticker}）のテクニカル分析を開始します...`);
 
