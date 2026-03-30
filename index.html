@@ -1345,7 +1345,7 @@ window.addEventListener('load', async () => {
     addSystemMessage('APIキーを設定してください（右上の歯車アイコン）');
   } else {
     if (chatHistory.length === 0) {
-      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-03-30d / stooq+proxy5]');
+      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-03-30e / yahoo+proxy8]');
     } else {
       restoreHistory();
     }
@@ -1814,7 +1814,7 @@ async function saveSettings() {
 
   closeSettings();
   if (chatHistory.length === 0 && apiKey) {
-    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-03-30d / stooq+proxy5]');
+    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-03-30e / yahoo+proxy8]');
   }
 }
 
@@ -2495,15 +2495,35 @@ async function fetchDailyHistoryYahoo(ticker, months = 3) {
     };
   }
 
-  // ① query2.finance.yahoo.com（query1より緩いCORSポリシー）
-  try {
-    const url = `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yhSymbol)}?interval=1d&range=${range}`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    return parseYahooJson(data, 'query2.yahoo');
-  } catch (e1) {
-    console.error('[query2.yahoo] 失敗、stooqにフォールバック:', e1.message);
+  // Yahoo Finance JSON取得ヘルパー（URL → パース済みオブジェクト）
+  async function tryYahooUrl(url, label) {
+    const r = await fetch(url, { signal: AbortSignal.timeout(10000) });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const d = await r.json();
+    return parseYahooJson(d, label);
+  }
+
+  // ① Yahoo Finance を複数エンドポイント・プロキシで試みる
+  const yhUrl2 = `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yhSymbol)}?interval=1d&range=${range}`;
+  const yhUrl1 = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yhSymbol)}?interval=1d&range=${range}`;
+  const yahooAttempts = [
+    { url: yhUrl2,  label: 'query2.direct' },
+    { url: yhUrl1,  label: 'query1.direct' },
+    { url: `https://api.allorigins.win/raw?url=${encodeURIComponent(yhUrl2)}`,  label: 'query2.allorigins' },
+    { url: `https://api.allorigins.win/raw?url=${encodeURIComponent(yhUrl1)}`,  label: 'query1.allorigins' },
+    { url: `https://corsproxy.io/?${encodeURIComponent(yhUrl2)}`,               label: 'query2.corsproxy' },
+    { url: `https://corsproxy.io/?${encodeURIComponent(yhUrl1)}`,               label: 'query1.corsproxy' },
+    { url: `https://thingproxy.freeboard.io/fetch/${yhUrl2}`,                   label: 'query2.thingproxy' },
+    { url: `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(yhUrl2)}`, label: 'query2.codetabs' },
+  ];
+  for (const { url, label } of yahooAttempts) {
+    try {
+      const result = await tryYahooUrl(url, label);
+      console.log(`[yahoo] 成功: ${label}`);
+      return result;
+    } catch (e) {
+      console.error(`[yahoo] ${label} 失敗: ${e.message}`);
+    }
   }
 
   // ② stooq.com（CSV形式、APIキー不要）
@@ -2514,43 +2534,37 @@ async function fetchDailyHistoryYahoo(ticker, months = 3) {
   const fmt = d => d.toISOString().split('T')[0].replace(/-/g, '');
   const stooqUrl = `https://stooq.com/q/d/l/?s=${encodeURIComponent(stooqSymbol)}&d1=${fmt(d1)}&d2=${fmt(d2)}&i=d`;
 
-  // CORSプロキシリスト（直接 → 複数プロキシの順で試みる）
   const stooqProxies = [
-    u => u,                                                                   // 直接
-    u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,       // allorigins
-    u => `https://corsproxy.io/?${encodeURIComponent(u)}`,                    // corsproxy.io
-    u => `https://thingproxy.freeboard.io/fetch/${u}`,                        // thingproxy
-    u => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(u)}`, // codetabs
+    u => u,
+    u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+    u => `https://corsproxy.io/?${encodeURIComponent(u)}`,
+    u => `https://thingproxy.freeboard.io/fetch/${u}`,
+    u => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(u)}`,
   ];
-
   let csvText = null;
   for (const makeProxy of stooqProxies) {
     const proxyUrl = makeProxy(stooqUrl);
     try {
       const r = await fetch(proxyUrl, { signal: AbortSignal.timeout(10000) });
-      if (!r.ok) { console.error(`[stooq] ${proxyUrl.slice(0,40)} HTTP ${r.status}`); continue; }
+      if (!r.ok) { console.error(`[stooq] HTTP ${r.status}: ${proxyUrl.slice(0,50)}`); continue; }
       const t = await r.text();
-      // HTMLレスポンス（エラーページ等）を除外、CSVとして有効か確認
       if (t.length > 30 && !t.trim().startsWith('<') && t.includes(',')) {
         csvText = t;
-        console.log(`[stooq] 成功: ${proxyUrl.slice(0, 50)}`);
+        console.log(`[stooq] 成功: ${proxyUrl.slice(0, 60)}`);
         break;
       }
-      console.error(`[stooq] 無効レスポンス: ${t.slice(0, 80)}`);
+      console.error(`[stooq] 無効レスポンス(${t.length}bytes): ${t.slice(0, 80)}`);
     } catch (ex) {
-      console.error(`[stooq] ${proxyUrl.slice(0, 40)} 失敗: ${ex.message}`);
+      console.error(`[stooq] 失敗: ${proxyUrl.slice(0, 50)}: ${ex.message}`);
     }
   }
 
-  if (!csvText) throw new Error(`stooq: ${stooqSymbol}のデータ取得に失敗しました（全プロキシ試行済み）`);
+  if (!csvText) throw new Error(`${stooqSymbol}のデータ取得に失敗しました（Yahoo/stooq全プロキシ試行済み）`);
 
   const lines = csvText.trim().split('\n');
-  // ヘッダー行の確認（Date,Open,High,Low,Close,Volume）
   if (lines.length < 2 || lines[0].toLowerCase().includes('no data')) {
     throw new Error(`stooq: ${stooqSymbol}のデータがありません`);
   }
-
-  // CSV解析（stooqは昇順で返す）
   const rows = lines.slice(1).map(line => {
     const [date, open, high, low, close, volume] = line.split(',');
     return {
@@ -2563,7 +2577,6 @@ async function fetchDailyHistoryYahoo(ticker, months = 3) {
 
   if (!rows.length) throw new Error(`stooq: ${stooqSymbol}の有効データがありません`);
 
-  // 最新 months * 22 営業日分に絞る
   const targetDays = months * 22;
   const recent = rows.slice(-targetDays);
 
@@ -2660,8 +2673,8 @@ async function fetchDailyHistory(ticker, months = 3) {
         if (!res.ok) throw new Error(`Alpha Vantage API Error: ${res.status}`);
         const d = await res.json();
         recordAvCall();
-        if (d['Note']) throw new Error('API制限: stooqデータ取得に失敗しAVにフォールバックしましたが、分間制限（5回/分）に達しました。1分待って再試行してください。');
-        if (d['Information']) throw new Error('API制限: stooqデータ取得に失敗しAVにフォールバックしましたが、日次上限に達しました。stooqプロキシの修正が必要です。');
+        if (d['Note']) throw new Error('Alpha Vantage 分間制限（5回/分）に達しました。1分待って再試行してください。');
+        if (d['Information']) throw new Error('Alpha Vantage 日次上限（25回/日）に達しました。明日リセットされます。Yahoo Finance / stooq も取得できない場合はお知らせください。');
         if (d['Error Message']) {
           if (sym !== symbolsToTry[symbolsToTry.length - 1]) continue;
           throw new Error(`データ取得失敗: Yahoo Finance・Alpha Vantage両方で取得できませんでした`);
