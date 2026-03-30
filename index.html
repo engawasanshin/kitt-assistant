@@ -4932,16 +4932,43 @@ function analyzeAndRecord(text) {
     // 銘柄名やティッカーが含まれているか確認
     let targetStock = null;
     for (const stock of watchlist) {
-      if (lowerText.includes(stock.name.toLowerCase()) || lowerText.includes(stock.ticker.toLowerCase())) {
+      const resolvedName = stock.name || TICKER_NAMES[stock.ticker] || '';
+      const tickerBase = stock.ticker.replace(/\.T(YO)?$/, '').toLowerCase();
+      // 空文字nameでは誤マッチするため必ずnon-emptyを確認
+      const nameMatch = resolvedName && lowerText.includes(resolvedName.toLowerCase());
+      const tickerMatch = lowerText.includes(stock.ticker.toLowerCase()) || lowerText.includes(tickerBase);
+      if (nameMatch || tickerMatch) {
         targetStock = stock;
         break;
       }
     }
 
-    if (!targetStock && watchlist.length === 1) {
+    // ウォッチリスト外でも_stockLookupキーワードで銘柄を特定
+    let specificStockMentioned = false;
+    if (!targetStock) {
+      const lookup = {
+        'inpex': '1605.T', 'インペックス': '1605.T', 'インペクス': '1605.T',
+        '東電': '9501.T', '東京電力': '9501.T', 'ディスコ': '6146.T',
+        'スクリーン': '7735.T', 'screen': '7735.T', 'トヨタ': '7203.T',
+        '三菱ufj': '8306.T',
+      };
+      for (const [key, sym] of Object.entries(lookup)) {
+        if (lowerText.includes(key.toLowerCase())) {
+          specificStockMentioned = true;
+          const found = watchlist.find(s => s.ticker === sym);
+          if (found) { targetStock = found; break; }
+          // 銘柄名は分かるがウォッチリストにない
+          const name = TICKER_NAMES[sym] || sym;
+          addSystemMessage(`⚠️ ${name}（${sym}）はウォッチリストに未登録です。\n「${key}をウォッチリストに追加して」と話しかけてから分析してください。`);
+          return;
+        }
+      }
+    }
+
+    if (!targetStock && !specificStockMentioned && watchlist.length === 1) {
       targetStock = watchlist[0];
     } else if (!targetStock) {
-      addSystemMessage(`📈 どの銘柄のテクニカル分析を行いますか？\n${watchlist.map(s => `- ${s.name} (${s.ticker})`).join('\n')}`);
+      addSystemMessage(`📈 どの銘柄のテクニカル分析を行いますか？\n${watchlist.map(s => `- ${(s.name || TICKER_NAMES[s.ticker] || s.ticker)} (${s.ticker})`).join('\n')}`);
       return;
     }
 
