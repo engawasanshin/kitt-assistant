@@ -1066,8 +1066,8 @@ function showAvConfirm(ticker, cacheDate, remaining) {
 }
 
 // --- K.I.T.T. Memory System ---
-// 改良版C案: 3層の記憶構造（Vercel Functions経由でセキュアアクセス）
-const MEMORY_MD_URL = 'https://kitt-assistant.vercel.app/api/memory';
+// GitHub Raw直接読み込み（Vercel APIが古いバージョンを返す問題を解消）
+const MEMORY_MD_URL = 'https://raw.githubusercontent.com/engawasanshin/kitt-assistant/main/kitt_memory.md';
 const RECENT_CONVERSATIONS_URL = 'https://kitt-assistant.vercel.app/api/recent';
 const ARCHIVE_SUMMARY_URL = 'https://kitt-assistant.vercel.app/api/archive';
 
@@ -1356,7 +1356,7 @@ window.addEventListener('load', async () => {
     addSystemMessage('APIキーを設定してください（右上の歯車アイコン）');
   } else {
     if (chatHistory.length === 0) {
-      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-03-30f / no-fake-analysis]');
+      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-03-31a / github-raw-memory]');
     } else {
       restoreHistory();
     }
@@ -1825,7 +1825,7 @@ async function saveSettings() {
 
   closeSettings();
   if (chatHistory.length === 0 && apiKey) {
-    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-03-30f / no-fake-analysis]');
+    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-03-31a / github-raw-memory]');
   }
 }
 
