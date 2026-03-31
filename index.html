@@ -1341,6 +1341,39 @@ function checkExportPrompt() {
   }
 }
 
+// --- デフォルトウォッチリスト（初回起動時のみ登録） ---
+function seedDefaultWatchlist() {
+  const existing = getWatchlist();
+  if (existing.length > 0) return; // すでに登録済みならスキップ
+
+  const defaults = [
+    { ticker: '1605.T', name: 'INPEX',                      sector: 'エネルギー',     reason: 'エネルギー価格・地政学リスク連動' },
+    { ticker: '9501.T', name: '東京電力ホールディングス',    sector: '電力・インフラ', reason: 'AIデータセンターの電力需要インフラ' },
+    { ticker: '6146.T', name: 'ディスコ',                   sector: '半導体装置',     reason: '半導体精密加工の世界的リーダー' },
+    { ticker: '7735.T', name: 'SCREENホールディングス',      sector: '半導体装置',     reason: '半導体洗浄装置の世界的リーダー' },
+    { ticker: '7203.T', name: 'トヨタ自動車',               sector: '自動車',         reason: '製造業代表銘柄' },
+    { ticker: '8306.T', name: '三菱UFJフィナンシャル・グループ', sector: '金融',       reason: 'メガバンク代表銘柄' },
+  ];
+
+  const today = new Date().toISOString().split('T')[0];
+  const watchlist = defaults.map(d => ({
+    ticker:        d.ticker,
+    name:          d.name,
+    sector:        d.sector,
+    addedPrice:    null,
+    currentPrice:  null,
+    change:        null,
+    changePercent: null,
+    addedDate:     today,
+    addedReason:   d.reason,
+    lastUpdated:   null,
+    newsCount:     0,
+  }));
+
+  localStorage.setItem('kitt_investment_watchlist', JSON.stringify(watchlist));
+  console.log('[init] デフォルトウォッチリスト6銘柄を登録しました');
+}
+
 // --- Init ---
 window.addEventListener('load', async () => {
   // 起動時: 壊れた履歴キャッシュを自動検出・クリア
@@ -1348,6 +1381,8 @@ window.addEventListener('load', async () => {
     console.error('[init] 破損キャッシュ自動クリア:', e.message);
     localStorage.removeItem('kitt_historical_data');
   }
+  // ウォッチリストが空なら6銘柄をデフォルト登録
+  seedDefaultWatchlist();
   updateApiCounterUI();
   updateAvCounterUI();
   await Promise.all([loadStatusContext(), loadKittMemory()]);
@@ -1356,7 +1391,7 @@ window.addEventListener('load', async () => {
     addSystemMessage('APIキーを設定してください（右上の歯車アイコン）');
   } else {
     if (chatHistory.length === 0) {
-      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-03-31a / github-raw-memory]');
+      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-03-31b / watchlist-default]');
     } else {
       restoreHistory();
     }
@@ -1825,7 +1860,7 @@ async function saveSettings() {
 
   closeSettings();
   if (chatHistory.length === 0 && apiKey) {
-    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-03-31a / github-raw-memory]');
+    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-03-31b / watchlist-default]');
   }
 }
 
@@ -2146,11 +2181,11 @@ async function updateWatchlist() {
   localStorage.setItem('kitt_investment_watchlist', JSON.stringify(merged));
   localStorage.setItem('kitt_investment_price_cache', JSON.stringify(cache));
 
-  return {
-    updated: updatedCount,
-    total: merged.length,
-    message: `${updatedCount}/${merged.length}件の銘柄を更新しました`
-  };
+  const skippedCount = merged.length - updatedCount;
+  const msg = updatedCount > 0
+    ? `${updatedCount}/${merged.length}件の株価を更新しました（${skippedCount > 0 ? `${skippedCount}件はキャッシュ有効のためスキップ` : '全件更新'}）`
+    : `${merged.length}件全てキャッシュ有効（6時間以内に取得済み）のためスキップしました`;
+  return { updated: updatedCount, total: merged.length, message: msg };
 }
 
 /**
@@ -2285,8 +2320,8 @@ function displayWatchlist(watchlist) {
   contentEl.innerHTML = html;
   container.style.display = 'block';
 
-  // 折りたたみ状態を復元（デフォルト: 折りたたみ）
-  const collapsed = localStorage.getItem('kitt_watchlist_collapsed') !== '0';
+  // 折りたたみ状態を復元（デフォルト: 展開）
+  const collapsed = localStorage.getItem('kitt_watchlist_collapsed') === '1';
   const body = document.getElementById('watchlistBody');
   const btn = document.getElementById('watchlistToggleBtn');
   if (body && btn) {
