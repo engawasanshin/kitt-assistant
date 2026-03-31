@@ -1391,7 +1391,7 @@ window.addEventListener('load', async () => {
     addSystemMessage('APIキーを設定してください（右上の歯車アイコン）');
   } else {
     if (chatHistory.length === 0) {
-      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-03-31c / price-history]');
+      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-03-31d / morning-briefing]');
     } else {
       restoreHistory();
     }
@@ -1404,9 +1404,9 @@ window.addEventListener('load', async () => {
   // Periodic export prompt (check every 10 minutes)
   setInterval(checkExportPrompt, 10 * 60 * 1000);
 
-  // ウォッチリスト自動更新チェック（朝9時以降、1日1回）
-  // 3分後に実行 → 起動直後のAPI枠をユーザー操作に残す
-  setTimeout(checkAndAutoUpdateWatchlist, 3 * 60 * 1000);
+  // ウォッチリスト自動更新チェック（朝7時以降、1日1回）
+  // 10秒後に実行 → 起動直後にKITT朝のブリーフィングを表示
+  setTimeout(checkAndAutoUpdateWatchlist, 10 * 1000);
 });
 
 // --- Chat Functions ---
@@ -1860,7 +1860,7 @@ async function saveSettings() {
 
   closeSettings();
   if (chatHistory.length === 0 && apiKey) {
-    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-03-31c / price-history]');
+    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-03-31d / morning-briefing]');
   }
 }
 
@@ -2402,39 +2402,76 @@ async function handleRemoveFromWatchlist(ticker) {
 
 async function checkAndAutoUpdateWatchlist() {
   const watchlist = getWatchlist();
-  if (watchlist.length === 0) {
-    return; // ウォッチリストが空なら何もしない
-  }
+  if (watchlist.length === 0) return;
 
   const now = new Date();
-  const today = now.toISOString().split('T')[0]; // YYYY-MM-DD
+  const today = now.toISOString().split('T')[0];
   const lastAutoUpdate = localStorage.getItem('kitt_watchlist_last_auto_update');
 
-  // 今日まだ自動更新していない場合のみ更新
-  if (lastAutoUpdate !== today) {
-    const currentHour = now.getHours();
-
-    // 朝9時以降かつ未更新の場合に自動更新
-    if (currentHour >= 9) {
-      console.log('[Auto Update] ウォッチリストを自動更新します');
-
-      try {
-        const result = await updateWatchlist();
-        console.log('[Auto Update] 完了:', result.message);
-
-        // 最終自動更新日を記録
-        localStorage.setItem('kitt_watchlist_last_auto_update', today);
-
-        // ダッシュボード再描画
-        setTimeout(updateDashboard, 500);
-      } catch (err) {
-        console.error('[Auto Update] エラー:', err);
-      }
-    } else {
-      console.log('[Auto Update] 9時前のためスキップ');
-    }
-  } else {
+  if (lastAutoUpdate === today) {
     console.log('[Auto Update] 今日は既に更新済み');
+    return;
+  }
+
+  const currentHour = now.getHours();
+  if (currentHour < 7) {
+    console.log('[Auto Update] 7時前のためスキップ');
+    return;
+  }
+
+  console.log('[Auto Update] ウォッチリストを自動更新します');
+
+  try {
+    const result = await updateWatchlist();
+    localStorage.setItem('kitt_watchlist_last_auto_update', today);
+    setTimeout(updateDashboard, 500);
+
+    // KITTからの朝の報告メッセージを生成
+    const updated = getWatchlist();
+    const hour = now.getHours();
+    const greeting = hour < 12 ? 'おはようございます' : hour < 18 ? 'こんにちは' : 'こんばんは';
+
+    // 価格変動サマリーを作成
+    const priceLines = updated
+      .filter(item => item.currentPrice && item.addedPrice)
+      .map(item => {
+        const chg = parseFloat(item.changePercent) || 0;
+        const arrow = chg > 1 ? '📈' : chg < -1 ? '📉' : '➡️';
+        const sign = chg >= 0 ? '+' : '';
+        return `  ${arrow} ${item.name}：¥${Math.round(item.currentPrice).toLocaleString()}（${sign}${chg.toFixed(1)}%）`;
+      });
+
+    // 注目銘柄（変動大きい順に1〜2件）
+    const movers = updated
+      .filter(item => item.changePercent != null)
+      .sort((a, b) => Math.abs(parseFloat(b.changePercent)) - Math.abs(parseFloat(a.changePercent)))
+      .slice(0, 2);
+
+    let attention = '';
+    if (movers.length > 0) {
+      const top = movers[0];
+      const pct = parseFloat(top.changePercent);
+      if (Math.abs(pct) >= 2) {
+        attention = pct > 0
+          ? `\n特に${top.name}が+${pct.toFixed(1)}%と上昇しています。テクニカル分析で確認してみましょうか？`
+          : `\n特に${top.name}が${pct.toFixed(1)}%と下落しています。押し目かもしれません。`;
+      }
+    }
+
+    const noPrice = updated.filter(item => !item.currentPrice);
+    const noPriceNote = noPrice.length > 0
+      ? `\n（${noPrice.map(i => i.name).join('・')}は価格取得中です）`
+      : '';
+
+    const body = priceLines.length > 0
+      ? `ウォッチリストを更新しました。\n\n${priceLines.join('\n')}${attention}${noPriceNote}`
+      : `ウォッチリストの価格確認を試みましたが、現在取得できなかった銘柄があります。後ほど再試行します。`;
+
+    addMessage('assistant', `${greeting}、塩川さん。📊 ${body}`);
+
+    console.log('[Auto Update] 完了:', result.message);
+  } catch (err) {
+    console.error('[Auto Update] エラー:', err);
   }
 }
 
