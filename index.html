@@ -1391,7 +1391,7 @@ window.addEventListener('load', async () => {
     addSystemMessage('APIキーを設定してください（右上の歯車アイコン）');
   } else {
     if (chatHistory.length === 0) {
-      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-03-31b / watchlist-default]');
+      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-03-31c / price-history]');
     } else {
       restoreHistory();
     }
@@ -1860,7 +1860,7 @@ async function saveSettings() {
 
   closeSettings();
   if (chatHistory.length === 0 && apiKey) {
-    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-03-31b / watchlist-default]');
+    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-03-31c / price-history]');
   }
 }
 
@@ -2047,19 +2047,22 @@ function addToWatchlist(candidate, userReason = '') {
     throw new Error(`${candidate.name}は既にウォッチリストに登録されています`);
   }
 
+  const addedPrice = candidate.price ? parseFloat(candidate.price) : null;
+  const today = new Date().toISOString().split('T')[0];
   watchlist.push({
     ticker: candidate.symbol,
     name: candidate.name,
     sector: candidate.sector,
-    addedDate: new Date().toISOString().split('T')[0],
-    addedPrice: parseFloat(candidate.price),
+    addedDate: today,
+    addedPrice: addedPrice,
     addedReason: userReason || candidate.reason,
-    currentPrice: parseFloat(candidate.price),
+    currentPrice: addedPrice,
     change: 0,
     changePercent: 0,
-    lastUpdated: new Date().toISOString(),
+    lastUpdated: addedPrice ? new Date().toISOString() : null,
     newsCount: 0,
-    lastNewsCheck: null
+    lastNewsCheck: null,
+    priceHistory: addedPrice ? [{ date: today, price: addedPrice }] : [],
   });
 
   localStorage.setItem('kitt_investment_watchlist', JSON.stringify(watchlist));
@@ -2141,9 +2144,24 @@ async function updateWatchlist() {
       const quote = await fetchStockQuote(item.ticker);
 
       item.currentPrice = parseFloat(quote.price);
+      // addedPrice未設定（デフォルト登録銘柄）なら初回取得時に登録価格を設定
+      if (!item.addedPrice) {
+        item.addedPrice = item.currentPrice;
+        item.addedDate = item.addedDate || now.toISOString().split('T')[0];
+      }
       item.change = item.currentPrice - item.addedPrice;
       item.changePercent = ((item.change / item.addedPrice) * 100).toFixed(2);
       item.lastUpdated = now.toISOString();
+
+      // 価格履歴に本日分を追記（1日1件、重複なし）
+      const today = now.toISOString().split('T')[0];
+      if (!item.priceHistory) item.priceHistory = [];
+      const alreadyToday = item.priceHistory.some(h => h.date === today);
+      if (!alreadyToday) {
+        item.priceHistory.push({ date: today, price: item.currentPrice });
+        // 最大180件（約6ヶ月分）まで保持
+        if (item.priceHistory.length > 180) item.priceHistory.shift();
+      }
 
       // ニュース取得（週1回程度）
       const daysSinceNewsCheck = item.lastNewsCheck
@@ -2310,6 +2328,21 @@ function displayWatchlist(watchlist) {
             <div style="color: #888;">${lastUpdateDate}更新</div>
           </div>
           ${item.newsCount > 0 ? `<div style="font-size: 10px; color: #ff8866; margin-top: 4px;">📰 ニュース ${item.newsCount}件</div>` : ''}
+          ${(() => {
+            const hist = item.priceHistory;
+            if (!hist || hist.length < 2) return '';
+            const first = hist[0];
+            const latest = hist[hist.length - 1];
+            const days = hist.length;
+            const totalChange = latest.price - first.price;
+            const totalPct = ((totalChange / first.price) * 100).toFixed(1);
+            const color = totalChange >= 0 ? '#88cc88' : '#cc8888';
+            const sign = totalChange >= 0 ? '+' : '';
+            return `<div style="font-size: 10px; color: #888; margin-top: 4px; border-top: 1px solid #2a2a2a; padding-top: 4px;">
+              📅 登録来 ${days}日間: <span style="color:${color};font-weight:bold;">${sign}¥${Math.round(totalChange).toLocaleString()}（${sign}${totalPct}%）</span>
+              <span style="color:#555;"> ${first.date}〜${latest.date}</span>
+            </div>`;
+          })()}
         </div>
       `;
     });
