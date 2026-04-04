@@ -1391,7 +1391,7 @@ window.addEventListener('load', async () => {
     addSystemMessage('APIキーを設定してください（右上の歯車アイコン）');
   } else {
     if (chatHistory.length === 0) {
-      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-04a / stock-query-fix]');
+      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-04b / sparkline-natural-add]');
     } else {
       restoreHistory();
     }
@@ -1503,6 +1503,10 @@ async function sendMessage() {
     /どう|状況|調子|推移|最近|いま|今どんな|見せて|確認|教えて|株価/.test(_lc) &&
     !(_lc.includes('ウォッチ') && /追加|削除|登録/.test(_lc));
 
+  // 自然な銘柄追加の検出（Geminiスキップ用）
+  const _naturalAdd = /気になる|気になって|ウォッチしたい|監視して|見ておいて|追跡して|登録したい|入れたい|チェックしたい/.test(_lc) &&
+    ['inpex', 'インペックス', 'インペクス', '東電', '東京電力', 'ディスコ', 'スクリーン', 'screen', 'トヨタ', '三菱ufj', '1605', '9501', '6146', '7735', '7203', '8306'].some(k => _lc.includes(k));
+
   const _isLocalCmd = (
     ((_lc.includes('ウォッチ') || _lc.includes('ウォッチリスト')) &&
      /追加|登録|入れて|加えて|削除|外して|消して|抜いて|確認|状態|見せて|表示/.test(_lc)) ||
@@ -1511,7 +1515,8 @@ async function sendMessage() {
     ((_lc.includes('テクニカル') || _lc.includes('チャート分析') || _lc.includes('移動平均') ||
       _lc.includes('ボリンジャー') || _lc.includes('グラフ')) &&
      (_lc.includes('分析') || _lc.includes('描いて') || _lc.includes('見せて') || _lc.includes('お願い'))) ||
-    _isStockQuery
+    _isStockQuery ||
+    _naturalAdd
   );
 
   const sendBtn = document.getElementById('sendBtn');
@@ -1875,7 +1880,7 @@ async function saveSettings() {
 
   closeSettings();
   if (chatHistory.length === 0 && apiKey) {
-    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-04a / stock-query-fix]');
+    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-04b / sparkline-natural-add]');
   }
 }
 
@@ -2353,9 +2358,20 @@ function displayWatchlist(watchlist) {
             const totalPct = ((totalChange / first.price) * 100).toFixed(1);
             const color = totalChange >= 0 ? '#88cc88' : '#cc8888';
             const sign = totalChange >= 0 ? '+' : '';
-            return `<div style="font-size: 10px; color: #888; margin-top: 4px; border-top: 1px solid #2a2a2a; padding-top: 4px;">
-              📅 登録来 ${days}日間: <span style="color:${color};font-weight:bold;">${sign}¥${Math.round(totalChange).toLocaleString()}（${sign}${totalPct}%）</span>
-              <span style="color:#555;"> ${first.date}〜${latest.date}</span>
+            // スパークライン（SVG折れ線）
+            const prices = hist.map(h => h.price);
+            const pMin = Math.min(...prices);
+            const pMax = Math.max(...prices);
+            const pRange = pMax - pMin || 1;
+            const W = 80, H = 28;
+            const pts = prices.map((p, i) => {
+              const x = ((i / (prices.length - 1)) * (W - 4) + 2).toFixed(1);
+              const y = (H - 2 - ((p - pMin) / pRange) * (H - 4)).toFixed(1);
+              return `${x},${y}`;
+            }).join(' ');
+            const spark = `<svg width="${W}" height="${H}" style="vertical-align:middle;margin-right:6px;"><polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linejoin="round"/></svg>`;
+            return `<div style="font-size: 10px; color: #888; margin-top: 4px; border-top: 1px solid #2a2a2a; padding-top: 4px; display:flex; align-items:center;">
+              ${spark}<span>📅 ${days}日間: <span style="color:${color};font-weight:bold;">${sign}¥${Math.round(totalChange).toLocaleString()}（${sign}${totalPct}%）</span><span style="color:#555;"> ${first.date}〜${latest.date}</span></span>
             </div>`;
           })()}
         </div>
@@ -5219,10 +5235,14 @@ function analyzeAndRecord(text) {
     '8306': { symbol: '8306.T', name: '三菱UFJフィナンシャル・グループ', sector: '金融' },
   };
 
-  // ウォッチリスト追加コマンド（複数銘柄一括対応）
-  if ((lowerText.includes('ウォッチリスト') || lowerText.includes('ウォッチ')) &&
-      (lowerText.includes('追加') || lowerText.includes('登録') || lowerText.includes('入れて') ||
-       lowerText.includes('加えて') || lowerText.includes('たして') || lowerText.includes('足して'))) {
+  // ウォッチリスト追加コマンド（明示的コマンド＋自然な言い方に対応）
+  // 明示: 「〇〇をウォッチリストに追加して」
+  // 自然: 「〇〇が気になる」「〇〇ウォッチしたい」「〇〇を監視して」など
+  const _naturalAddIntent = /気になる|気になって|ウォッチしたい|監視して|見ておいて|追跡して|登録したい|入れたい|チェックしたい/.test(lowerText);
+  const _explicitAddIntent = (lowerText.includes('ウォッチリスト') || lowerText.includes('ウォッチ')) &&
+    /追加|登録|入れて|加えて|たして|足して/.test(lowerText);
+
+  if (_naturalAddIntent || _explicitAddIntent) {
     // マッチした全銘柄を収集（重複除去）
     const matchedSymbols = new Set();
     const matchedStocks = [];
@@ -5253,6 +5273,12 @@ function analyzeAndRecord(text) {
       }
       if (added.length > 0) {
         addSystemMessage(`✅ ウォッチリストに追加しました:\n${added.map(n => '  ・' + n).join('\n')}`);
+        if (_naturalAddIntent && !_explicitAddIntent) {
+          // 自然な言い方の場合はKITTから一言
+          setTimeout(() => {
+            addMessage('assistant', `📋 ${added.map(n => n.split('（')[0]).join('・')}をウォッチリストに追加しました！価格が更新されたら通知しますね。チャートで確認したい時は「〇〇のチャート見せて」と話しかけてください。`);
+          }, 300);
+        }
         setTimeout(updateDashboard, 300);
       }
       if (skipped.length > 0) {
