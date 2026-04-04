@@ -1391,7 +1391,7 @@ window.addEventListener('load', async () => {
     addSystemMessage('APIキーを設定してください（右上の歯車アイコン）');
   } else {
     if (chatHistory.length === 0) {
-      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-04c / intent-fix-briefing]');
+      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-04d / weekend-news-memory]');
     } else {
       restoreHistory();
     }
@@ -1503,6 +1503,9 @@ async function sendMessage() {
     /どう|状況|調子|推移|最近|いま|今どんな|見せて|確認|教えて|株価/.test(_lc) &&
     !(_lc.includes('ウォッチ') && /追加|削除|登録/.test(_lc));
 
+  // ニュースコマンド検出
+  const _isNewsQuery = _hasKnownStock && /ニュース|最新情報|最新ニュース/.test(_lc);
+
   // 自然な銘柄追加の検出（Geminiスキップ用）
   const _naturalAdd = /気になる|気になって|ウォッチしたい|監視して|見ておいて|追跡して|登録したい|入れたい|チェックしたい/.test(_lc) &&
     ['inpex', 'インペックス', 'インペクス', '東電', '東京電力', 'ディスコ', 'スクリーン', 'screen', 'トヨタ', '三菱ufj', '1605', '9501', '6146', '7735', '7203', '8306'].some(k => _lc.includes(k));
@@ -1516,7 +1519,8 @@ async function sendMessage() {
       _lc.includes('ボリンジャー') || _lc.includes('グラフ') || _lc.includes('チャート')) &&
      /分析して|見せて|描いて|お願い|表示して|チェックして/.test(_lc)) ||
     _isStockQuery ||
-    _naturalAdd
+    _naturalAdd ||
+    _isNewsQuery
   );
 
   const sendBtn = document.getElementById('sendBtn');
@@ -1880,7 +1884,7 @@ async function saveSettings() {
 
   closeSettings();
   if (chatHistory.length === 0 && apiKey) {
-    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-04c / intent-fix-briefing]');
+    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-04d / weekend-news-memory]');
   }
 }
 
@@ -2447,6 +2451,16 @@ async function checkAndAutoUpdateWatchlist() {
   const currentHour = now.getHours();
   if (currentHour < 7) {
     console.log('[Auto Update] 7時前のためスキップ');
+    return;
+  }
+
+  // 土日は市場休場のためスキップ（ブリーフィングのみ）
+  const dayOfWeek = now.getDay();
+  if (dayOfWeek === 0 || dayOfWeek === 6) {
+    const dayName = dayOfWeek === 0 ? '日曜日' : '土曜日';
+    const greeting = currentHour < 12 ? 'おはようございます' : currentHour < 18 ? 'こんにちは' : 'こんばんは';
+    addMessage('assistant', `${greeting}、塩川さん。📅 今日は${dayName}のため株式市場はお休みです。ゆっくりお過ごしください！週明けにウォッチリストを更新します。`);
+    localStorage.setItem('kitt_watchlist_last_auto_update', today);
     return;
   }
 
@@ -5133,6 +5147,47 @@ function analyzeAndRecord(text) {
     /どう|状況|調子|推移|最近|いま|今どんな|見せて|確認|教えて|株価/.test(lowerText) &&
     !lowerText.includes('テクニカル') && !lowerText.includes('グラフ') &&
     !(lowerText.includes('ウォッチ') && /追加|削除|登録/.test(lowerText));
+
+  // === ニュースコマンド（「〇〇のニュースを教えて」「〇〇の最新情報」） ===
+  if ((lowerText.includes('ニュース') || lowerText.includes('最新情報') || lowerText.includes('最新ニュース')) && _sqHasStock) {
+    // どの銘柄か特定
+    let newsTicker = null;
+    let newsName = null;
+    for (const [key, sym] of Object.entries(_sqMap)) {
+      if (lowerText.includes(key)) {
+        const wl = getWatchlist();
+        const found = wl.find(s => s.ticker === sym);
+        if (found) { newsTicker = sym; newsName = found.name || TICKER_NAMES[sym] || sym; break; }
+        // ウォッチリスト外でも対応
+        newsTicker = sym; newsName = TICKER_NAMES[sym] || sym; break;
+      }
+    }
+    if (newsTicker) {
+      addSystemMessage(`📰 ${newsName}の最新ニュースを取得中...`);
+      setTimeout(async () => {
+        try {
+          const news = await fetchNewsSentiment(newsTicker);
+          if (!news.feed || news.feed.length === 0) {
+            addSystemMessage(`⚠️ ${newsName}のニュースが見つかりませんでした。Alpha Vantage APIキーをご確認ください。`);
+            return;
+          }
+          const items = news.feed.slice(0, 5);
+          const sentimentLabel = news.overallSentiment > 0.15 ? '📈 ポジティブ' : news.overallSentiment < -0.15 ? '📉 ネガティブ' : '➡️ ニュートラル';
+          let msg = `📰 ${newsName} 最新ニュース（全体センチメント: ${sentimentLabel}）\n\n`;
+          items.forEach((item, i) => {
+            const date = item.time_published ? item.time_published.substring(0, 8).replace(/(\d{4})(\d{2})(\d{2})/, '$1/$2/$3') : '';
+            const s = item.overall_sentiment_score || 0;
+            const sIcon = s > 0.15 ? '📈' : s < -0.15 ? '📉' : '➡️';
+            msg += `${i + 1}. ${sIcon} ${item.title}\n   ${date} - ${item.source}\n\n`;
+          });
+          msg += `⚠️ 投資判断はご自身の責任でお願いします。`;
+          addSystemMessage(msg);
+        } catch (err) {
+          addSystemMessage(`❌ ニュース取得エラー: ${err.message}`);
+        }
+      }, 100);
+    }
+  }
 
   // キーワードだけでは起動しない → 依頼形が必要（「できるようになった」等の発言を誤検知しない）
   const _analysisIntent = /分析して|見せて|描いて|お願い|表示して|チェックして/.test(lowerText);
