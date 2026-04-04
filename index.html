@@ -1400,7 +1400,7 @@ window.addEventListener('load', async () => {
     addSystemMessage('APIキーを設定してください（右上の歯車アイコン）');
   } else {
     if (chatHistory.length === 0) {
-      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-05b / command-list-help]');
+      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-05c / fix-analysis-trigger]');
     } else {
       restoreHistory();
     }
@@ -1530,9 +1530,9 @@ async function sendMessage() {
     /気分グラフ|気分の推移|気分チャート|気分を見せて/.test(_lc) ||
     (/先週|今週の記録|今週何した|先週何してた|週次サマリー|週のまとめ/.test(_lc) && /記録|何した|振り返り|まとめ|サマリー/.test(_lc)) ||
     /先月の記録|先月何してた|月次サマリー/.test(_lc) ||
-    ((_lc.includes('テクニカル') || _lc.includes('移動平均') ||
-      _lc.includes('ボリンジャー') || _lc.includes('グラフ') || _lc.includes('チャート')) &&
-     /分析して|見せて|描いて|お願い|表示して|チェックして/.test(_lc)) ||
+    ((_lc.includes('テクニカル') && /分析して|見せて|お願い|チェックして/.test(_lc)) ||
+     ((_lc.includes('移動平均') || _lc.includes('ボリンジャー')) && /見せて|表示して|分析して/.test(_lc)) ||
+     ((_lc.includes('グラフ') || _lc.includes('チャート')) && /見せて|描いて|表示して/.test(_lc))) ||
     _naturalAdd ||
     _isNewsQuery
     // ※_isStockQueryはGeminiに流す（会話できるよう）。ウォッチリストはanalyzeAndRecordで自動表示
@@ -1898,7 +1898,7 @@ async function saveSettings() {
 
   closeSettings();
   if (chatHistory.length === 0 && apiKey) {
-    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-05b / command-list-help]');
+    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-05c / fix-analysis-trigger]');
   }
 }
 
@@ -5451,11 +5451,12 @@ function analyzeAndRecord(text) {
     }
   }
 
-  // キーワードだけでは起動しない → 依頼形が必要（「できるようになった」等の発言を誤検知しない）
-  const _analysisIntent = /分析して|見せて|描いて|お願い|表示して|チェックして/.test(lowerText);
-  if (_sqIsQuery ||
-      (_analysisIntent && (lowerText.includes('テクニカル') || lowerText.includes('移動平均') ||
-        lowerText.includes('ボリンジャー') || lowerText.includes('グラフ') || lowerText.includes('チャート'))) ||
+  // キーワードだけでは起動しない → 依頼形が必要（「チャート分析してくれてます」等の説明文を誤検知しない）
+  const _techAnalysisIntent =
+    (lowerText.includes('テクニカル') && /分析して|見せて|お願い|チェックして/.test(lowerText)) ||
+    ((lowerText.includes('移動平均') || lowerText.includes('ボリンジャー')) && /見せて|表示して|分析して/.test(lowerText)) ||
+    ((lowerText.includes('グラフ') || lowerText.includes('チャート')) && /見せて|描いて|表示して/.test(lowerText));
+  if (_sqIsQuery || _techAnalysisIntent ||
       (lowerText.includes('シグナル') && (lowerText.includes('株') || lowerText.includes('銘柄')))) {
 
     const watchlist = getWatchlist();
