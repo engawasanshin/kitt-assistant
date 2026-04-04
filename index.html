@@ -1391,7 +1391,7 @@ window.addEventListener('load', async () => {
     addSystemMessage('APIキーを設定してください（右上の歯車アイコン）');
   } else {
     if (chatHistory.length === 0) {
-      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-04b / sparkline-natural-add]');
+      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-04c / intent-fix-briefing]');
     } else {
       restoreHistory();
     }
@@ -1511,10 +1511,10 @@ async function sendMessage() {
     ((_lc.includes('ウォッチ') || _lc.includes('ウォッチリスト')) &&
      /追加|登録|入れて|加えて|削除|外して|消して|抜いて|確認|状態|見せて|表示/.test(_lc)) ||
     /キャッシュリセット|キャッシュ削除/.test(_lc) ||
-    /自己チェック|状態診断/.test(_lc) ||
-    ((_lc.includes('テクニカル') || _lc.includes('チャート分析') || _lc.includes('移動平均') ||
-      _lc.includes('ボリンジャー') || _lc.includes('グラフ')) &&
-     (_lc.includes('分析') || _lc.includes('描いて') || _lc.includes('見せて') || _lc.includes('お願い'))) ||
+    /自己チェック|状態診断|ブリーフィング/.test(_lc) ||
+    ((_lc.includes('テクニカル') || _lc.includes('移動平均') ||
+      _lc.includes('ボリンジャー') || _lc.includes('グラフ') || _lc.includes('チャート')) &&
+     /分析して|見せて|描いて|お願い|表示して|チェックして/.test(_lc)) ||
     _isStockQuery ||
     _naturalAdd
   );
@@ -1880,7 +1880,7 @@ async function saveSettings() {
 
   closeSettings();
   if (chatHistory.length === 0 && apiKey) {
-    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-04b / sparkline-natural-add]');
+    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-04c / intent-fix-briefing]');
   }
 }
 
@@ -5134,9 +5134,11 @@ function analyzeAndRecord(text) {
     !lowerText.includes('テクニカル') && !lowerText.includes('グラフ') &&
     !(lowerText.includes('ウォッチ') && /追加|削除|登録/.test(lowerText));
 
-  if (_sqIsQuery || lowerText.includes('テクニカル') || lowerText.includes('移動平均') ||
-      lowerText.includes('ボリンジャー') || lowerText.includes('チャート分析') ||
-      lowerText.includes('グラフ') ||
+  // キーワードだけでは起動しない → 依頼形が必要（「できるようになった」等の発言を誤検知しない）
+  const _analysisIntent = /分析して|見せて|描いて|お願い|表示して|チェックして/.test(lowerText);
+  if (_sqIsQuery ||
+      (_analysisIntent && (lowerText.includes('テクニカル') || lowerText.includes('移動平均') ||
+        lowerText.includes('ボリンジャー') || lowerText.includes('グラフ') || lowerText.includes('チャート'))) ||
       (lowerText.includes('シグナル') && (lowerText.includes('株') || lowerText.includes('銘柄')))) {
 
     const watchlist = getWatchlist();
@@ -5387,6 +5389,16 @@ function analyzeAndRecord(text) {
       msg += '\n【エラーログ】直近エラーなし ✅\n';
     }
     addSystemMessage(msg);
+    return;
+  }
+
+  // ブリーフィングコマンド（手動実行）
+  if (lowerText.includes('ブリーフィング')) {
+    // 本日分フラグをリセットして強制実行
+    localStorage.removeItem('kitt_watchlist_last_auto_update');
+    setTimeout(async () => {
+      await checkAndAutoUpdateWatchlist();
+    }, 100);
     return;
   }
 
