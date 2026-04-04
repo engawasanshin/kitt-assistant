@@ -588,6 +588,7 @@ body {
 </div>
 
 <div class="input-area">
+  <button onclick="showCommandList()" title="コマンド一覧" style="background:#1a1a2e;color:#88aaff;border:1px solid #2a2a4a;border-radius:6px;font-size:14px;font-weight:bold;padding:0 10px;cursor:pointer;flex-shrink:0;">?</button>
   <textarea id="userInput" rows="1" placeholder="K.I.T.T.に話しかける..."
     onkeydown="handleKeyDown(event)" oninput="autoResize(this)"></textarea>
   <button id="sendBtn" onclick="sendMessage()">送信</button>
@@ -1399,7 +1400,7 @@ window.addEventListener('load', async () => {
     addSystemMessage('APIキーを設定してください（右上の歯車アイコン）');
   } else {
     if (chatHistory.length === 0) {
-      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-05a / flexible-cmd-phase2]');
+      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-05b / command-list-help]');
     } else {
       restoreHistory();
     }
@@ -1525,6 +1526,7 @@ async function sendMessage() {
      /追加|登録|入れて|加えて|削除|外して|消して|抜いて|確認|状態|見せて|表示/.test(_lc)) ||
     /キャッシュリセット|キャッシュ削除/.test(_lc) ||
     /自己チェック|状態診断|ブリーフィング|振り返り|今日の記録/.test(_lc) ||
+    /^ヘルプ$|コマンド一覧|使い方|何ができる|できること/.test(_lc) ||
     /気分グラフ|気分の推移|気分チャート|気分を見せて/.test(_lc) ||
     (/先週|今週の記録|今週何した|先週何してた|週次サマリー|週のまとめ/.test(_lc) && /記録|何した|振り返り|まとめ|サマリー/.test(_lc)) ||
     /先月の記録|先月何してた|月次サマリー/.test(_lc) ||
@@ -1896,7 +1898,7 @@ async function saveSettings() {
 
   closeSettings();
   if (chatHistory.length === 0 && apiKey) {
-    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-05a / flexible-cmd-phase2]');
+    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-05b / command-list-help]');
   }
 }
 
@@ -3112,6 +3114,52 @@ function displayDailyLog() {
 
   content.innerHTML = html;
   area.style.display = 'block';
+}
+
+// コマンド一覧を表示
+function showCommandList() {
+  const html = `
+<div style="font-size:12px;line-height:1.8;">
+  <div style="color:#88aaff;font-weight:bold;margin-bottom:6px;border-bottom:1px solid #2a2a4a;padding-bottom:4px;">📋 KITTコマンド一覧</div>
+
+  <div style="color:#ff8866;margin-top:6px;margin-bottom:2px;">📊 投資・株</div>
+  <div style="color:#aaa;padding-left:8px;">
+    「<span style="color:#fff;">ブリーフィング</span>」→ 株価の朝報告（即時実行）<br>
+    「<span style="color:#fff;">INPEXどう？</span>」→ ウォッチリスト表示＋会話<br>
+    「<span style="color:#fff;">INPEXのチャートを分析して</span>」→ テクニカル分析<br>
+    「<span style="color:#fff;">INPEXのニュースを教えて</span>」→ 最新ニュース<br>
+    「<span style="color:#fff;">INPEXをウォッチに追加して</span>」→ 銘柄追加<br>
+    「<span style="color:#fff;">INPEXが気になる</span>」→ 自然言語で銘柄追加
+  </div>
+
+  <div style="color:#88cc88;margin-top:6px;margin-bottom:2px;">📔 日々の記録</div>
+  <div style="color:#aaa;padding-left:8px;">
+    「<span style="color:#fff;">振り返り</span>」→ 今日の記録を確認<br>
+    「<span style="color:#fff;">気分グラフ</span>」→ 過去30日の気分グラフ<br>
+    「<span style="color:#fff;">今週の記録</span>」→ 今週のサマリー<br>
+    「<span style="color:#fff;">先週何してた？</span>」→ 先週のサマリー<br>
+    「<span style="color:#fff;">先月の記録</span>」→ 過去30日のサマリー<br>
+    ※気分ワード（「疲れた」「楽しかった」等）は自動記録
+  </div>
+
+  <div style="color:#ffcc88;margin-top:6px;margin-bottom:2px;">💰 家計簿</div>
+  <div style="color:#aaa;padding-left:8px;">
+    「<span style="color:#fff;">1280円 コンビニ</span>」→ 手動入力<br>
+    レシートOCR後「<span style="color:#fff;">このレシートを記録して</span>」
+  </div>
+
+  <div style="color:#cc88cc;margin-top:6px;margin-bottom:2px;">🔧 システム</div>
+  <div style="color:#aaa;padding-left:8px;">
+    「<span style="color:#fff;">自己チェック</span>」→ アプリ状態・API使用量確認<br>
+    「<span style="color:#fff;">キャッシュリセット</span>」→ 価格キャッシュ削除<br>
+    「<span style="color:#fff;">ヘルプ</span>」「<span style="color:#fff;">コマンド一覧</span>」→ この一覧を表示
+  </div>
+
+  <div style="color:#666;font-size:10px;margin-top:8px;border-top:1px solid #2a2a2a;padding-top:4px;">
+    💡 上の「?」ボタンでいつでも確認できます
+  </div>
+</div>`;
+  addSystemMessageWithHTML(html);
 }
 
 // HTML付きシステムメッセージ（SVGグラフ等に使用）
@@ -5968,6 +6016,12 @@ function analyzeAndRecord(text) {
   }
 
   // === 日々の記録システム ===
+
+  // ヘルプ・コマンド一覧
+  if (/^ヘルプ$|コマンド一覧|使い方|何ができる|できること/.test(lowerText)) {
+    showCommandList();
+    return;
+  }
 
   // 気分グラフ表示（Phase 2）
   if (/気分グラフ|気分の推移|気分チャート|気分を見せて/.test(lowerText)) {
