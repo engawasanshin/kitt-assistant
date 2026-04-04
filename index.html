@@ -1209,11 +1209,47 @@ function getAppStateContext() {
     ctx += '\n【アプリエラー】直近のエラーなし ✅\n';
   }
 
+  // --- サブウインドウ状態（KITTが「見ている」情報）---
+  ctx += '\n【サブウインドウの現在状態】\n';
+  ctx += '※ KITTはこれらのデータを把握しており、塩川さんに説明できる。重複分析は不要。\n';
+
+  // 最後に表示したチャート
+  if (typeof _lastChartState !== 'undefined' && _lastChartState && _lastChartState.hist) {
+    const _hist = _lastChartState.hist;
+    const _ind = _lastChartState.indicators;
+    ctx += `チャート表示中: ${_lastChartState.title || '不明'}\n`;
+    if (_ind && _ind.latest) {
+      ctx += `  現在価格: \xA5${_ind.latest.toFixed(1)}\n`;
+      if (_ind.latestSma5) ctx += `  5日MA: \xA5${_ind.latestSma5.toFixed(1)}\n`;
+      if (_ind.latestSma25) ctx += `  25日MA: \xA5${_ind.latestSma25.toFixed(1)}\n`;
+      if (_ind.latestBB && _ind.latestBB.upper) ctx += `  BB: 上\xA5${_ind.latestBB.upper.toFixed(1)} / 下\xA5${_ind.latestBB.lower.toFixed(1)}\n`;
+    }
+    if (_hist.dates && _hist.dates.length > 0) {
+      ctx += `  データ期間: ${_hist.dates[0]} 〜 ${_hist.dates[_hist.dates.length-1]}\n`;
+    }
+  } else {
+    ctx += 'チャート: 現在未表示\n';
+  }
+
+  // 今日の日々の記録
+  try {
+    const _todayLog = getTodayLog();
+    if (_todayLog) {
+      ctx += `今日の記録（${new Date().toISOString().split('T')[0]}）:\n`;
+      if (_todayLog.mood) ctx += `  気分: ${_todayLog.mood}（${_todayLog.moodScore > 0 ? '+' : ''}${_todayLog.moodScore}）\n`;
+      if (_todayLog.todos && _todayLog.todos.length > 0) ctx += `  TODO: ${_todayLog.todos.join('、')}\n`;
+      if (_todayLog.note) ctx += `  メモ: ${_todayLog.note}\n`;
+    } else {
+      ctx += `今日の記録（${new Date().toISOString().split('T')[0]}）: 未記録\n`;
+    }
+  } catch(e) { ctx += '今日の記録: 取得エラー\n'; }
+
   // 重要な制約
-  ctx += '\n【データ参照ルール】\n';
-  ctx += '- 上記「ウォッチリスト実態」が唯一の真実。推測・記憶で補完してはいけない。📊マークで参照すること。\n';
-  ctx += '- ウォッチリスト追加/削除/テクニカル分析などのコマンドはローカル処理済みのため、このメッセージには届かない。もし届いた場合は「処理済みのはずです」と答える。\n';
-  ctx += '- 対応チャットコマンド: 東電/9501、ディスコ/6146、スクリーン/7735、インペックス/1605、トヨタ/7203、三菱UFJ/8306\n';
+  ctx += '\n【データ参照ルール（アーキテクチャ原則）】\n';
+  ctx += '- KITTはマスターインターフェース。サブウインドウはKITTに従属する視覚補助。\n';
+  ctx += '- 「サブウインドウの現在状態」にデータがあれば、それを📊マークで参照して説明すること。架空数値は絶対禁止。\n';
+  ctx += '- チャートに実数値がある場合、同じ分析を会話で再実行しない（重複分析禁止）。\n';
+  ctx += '- ウォッチリスト操作・チャート表示などのコマンドはローカル処理済み。\n';
   ctx += '- 実態にない銘柄を「登録済み」と言うことは厳禁。\n';
 
   return ctx;
@@ -1400,7 +1436,7 @@ window.addEventListener('load', async () => {
     addSystemMessage('APIキーを設定してください（右上の歯車アイコン）');
   } else {
     if (chatHistory.length === 0) {
-      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-05c / fix-analysis-trigger]');
+      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-05d / architecture-context-inject]');
     } else {
       restoreHistory();
     }
@@ -1898,7 +1934,7 @@ async function saveSettings() {
 
   closeSettings();
   if (chatHistory.length === 0 && apiKey) {
-    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-05c / fix-analysis-trigger]');
+    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-05d / architecture-context-inject]');
   }
 }
 
