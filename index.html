@@ -1399,7 +1399,7 @@ window.addEventListener('load', async () => {
     addSystemMessage('APIキーを設定してください（右上の歯車アイコン）');
   } else {
     if (chatHistory.length === 0) {
-      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-04f / todo-pattern-expand]');
+      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-05a / flexible-cmd-phase2]');
     } else {
       restoreHistory();
     }
@@ -1507,8 +1507,10 @@ async function sendMessage() {
   const _knownStockWords = ['inpex', 'インペックス', 'インペクス', '東電', '東京電力', 'ディスコ',
     'スクリーン', 'screen', 'トヨタ', '三菱ufj', '1605', '9501', '6146', '7735', '7203', '8306'];
   const _hasKnownStock = _knownStockWords.some(k => _lc.includes(k));
+  // 株価・チャート系の質問（Geminiに流すが、ウォッチリストは自動表示）
+  // ※"教えて"・"確認"・"最近"・"いま"は会話用途に使うのでここでは拾わない
   const _isStockQuery = _hasKnownStock &&
-    /どう|状況|調子|推移|最近|いま|今どんな|見せて|確認|教えて|株価/.test(_lc) &&
+    /どう|状況|調子|推移|株価|今どんな/.test(_lc) &&
     !(_lc.includes('ウォッチ') && /追加|削除|登録/.test(_lc));
 
   // ニュースコマンド検出
@@ -1523,12 +1525,15 @@ async function sendMessage() {
      /追加|登録|入れて|加えて|削除|外して|消して|抜いて|確認|状態|見せて|表示/.test(_lc)) ||
     /キャッシュリセット|キャッシュ削除/.test(_lc) ||
     /自己チェック|状態診断|ブリーフィング|振り返り|今日の記録/.test(_lc) ||
+    /気分グラフ|気分の推移|気分チャート|気分を見せて/.test(_lc) ||
+    (/先週|今週の記録|今週何した|先週何してた|週次サマリー|週のまとめ/.test(_lc) && /記録|何した|振り返り|まとめ|サマリー/.test(_lc)) ||
+    /先月の記録|先月何してた|月次サマリー/.test(_lc) ||
     ((_lc.includes('テクニカル') || _lc.includes('移動平均') ||
       _lc.includes('ボリンジャー') || _lc.includes('グラフ') || _lc.includes('チャート')) &&
      /分析して|見せて|描いて|お願い|表示して|チェックして/.test(_lc)) ||
-    _isStockQuery ||
     _naturalAdd ||
     _isNewsQuery
+    // ※_isStockQueryはGeminiに流す（会話できるよう）。ウォッチリストはanalyzeAndRecordで自動表示
   );
 
   const sendBtn = document.getElementById('sendBtn');
@@ -1540,14 +1545,13 @@ async function sendMessage() {
     typing.classList.remove('active');
     sendBtn.disabled = false;
     input.focus();
-    // 銘柄への質問の場合はKITTから短いコメントを返す（Geminiには送らない）
-    if (_isStockQuery) {
-      setTimeout(() => {
-        addMessage('assistant', '📊 チャートで確認しましょう！ウォッチリストの実データをご覧ください。数値や分析はアプリのグラフが正確です。');
-      }, 200);
-    }
     setTimeout(updateDashboard, 500);
     return;
+  }
+
+  // 銘柄への質問はGeminiに流す（会話用）。ウォッチリストをサイドで自動表示
+  if (_isStockQuery) {
+    setTimeout(updateDashboard, 300);
   }
 
   try {
@@ -1892,7 +1896,7 @@ async function saveSettings() {
 
   closeSettings();
   if (chatHistory.length === 0 && apiKey) {
-    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-04f / todo-pattern-expand]');
+    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-05a / flexible-cmd-phase2]');
   }
 }
 
@@ -3108,6 +3112,114 @@ function displayDailyLog() {
 
   content.innerHTML = html;
   area.style.display = 'block';
+}
+
+// HTML付きシステムメッセージ（SVGグラフ等に使用）
+function addSystemMessageWithHTML(html) {
+  const chatArea = document.getElementById('chatArea');
+  const div = document.createElement('div');
+  div.className = 'message system';
+  div.innerHTML = html;
+  chatArea.appendChild(div);
+  chatArea.scrollTop = chatArea.scrollHeight;
+}
+
+// 過去N日の気分履歴を取得
+function getMoodHistory(days) {
+  const logs = getDailyLogs();
+  const result = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const key = d.toISOString().split('T')[0];
+    const log = logs[key];
+    result.push({
+      date: key,
+      dateLabel: `${d.getMonth()+1}/${d.getDate()}`,
+      moodScore: (log && log.moodScore !== undefined) ? log.moodScore : null,
+      mood: log ? log.mood : null,
+      todos: log ? (log.todos || []) : []
+    });
+  }
+  return result;
+}
+
+// 気分グラフSVGを生成
+function getMoodGraphSVG(days) {
+  const history = getMoodHistory(days);
+  const W = 300, H = 110;
+  const padL = 26, padR = 8, padT = 10, padB = 26;
+  const innerW = W - padL - padR;
+  const innerH = H - padT - padB;
+  const toY = score => padT + ((2 - score) / 4) * innerH;
+
+  // 折れ線（記録あり区間ごと）
+  let segments = [], seg = '';
+  history.forEach((d, i) => {
+    const x = (padL + (i / Math.max(history.length - 1, 1)) * innerW).toFixed(1);
+    if (d.moodScore !== null) {
+      const y = toY(d.moodScore).toFixed(1);
+      seg += (seg === '' ? `M ${x},${y}` : ` L ${x},${y}`);
+    } else {
+      if (seg) { segments.push(seg); seg = ''; }
+    }
+  });
+  if (seg) segments.push(seg);
+  const paths = segments.map(s =>
+    `<path d="${s}" fill="none" stroke="#88aaff" stroke-width="1.5" stroke-linejoin="round"/>`).join('');
+
+  // データ点
+  const dots = history.map((d, i) => {
+    if (d.moodScore === null) return '';
+    const x = (padL + (i / Math.max(history.length - 1, 1)) * innerW).toFixed(1);
+    const y = toY(d.moodScore).toFixed(1);
+    const c = d.moodScore > 0 ? '#88cc88' : d.moodScore < 0 ? '#cc8888' : '#aaa';
+    return `<circle cx="${x}" cy="${y}" r="2.5" fill="${c}"/>`;
+  }).join('');
+
+  // X軸ラベル（最大6個）
+  const step = Math.max(1, Math.ceil(days / 6));
+  const xLabels = history.map((d, i) => {
+    if (i % step !== 0 && i !== history.length - 1) return '';
+    const x = (padL + (i / Math.max(history.length - 1, 1)) * innerW).toFixed(1);
+    return `<text x="${x}" y="${H - 4}" font-size="8" fill="#555" text-anchor="middle">${d.dateLabel}</text>`;
+  }).join('');
+
+  const zeroY = toY(0).toFixed(1);
+  const recordedCount = history.filter(d => d.moodScore !== null).length;
+
+  return `<div style="text-align:center;font-size:11px;color:#88aaff;margin-bottom:2px;">📊 気分グラフ（過去${days}日 / ${recordedCount}日記録済み）</div>
+<svg width="${W}" height="${H}" style="display:block;margin:0 auto;max-width:100%;">
+  <rect width="${W}" height="${H}" fill="#0f0f0f" rx="4"/>
+  <line x1="${padL}" y1="${padT}" x2="${padL}" y2="${H-padB}" stroke="#2a2a2a" stroke-width="1"/>
+  <line x1="${padL}" y1="${H-padB}" x2="${W-padR}" y2="${H-padB}" stroke="#2a2a2a" stroke-width="1"/>
+  <line x1="${padL}" y1="${zeroY}" x2="${W-padR}" y2="${zeroY}" stroke="#333" stroke-width="1" stroke-dasharray="3,3"/>
+  <text x="${padL-3}" y="${(padT+4).toFixed(1)}" font-size="8" fill="#555" text-anchor="end">+2</text>
+  <text x="${padL-3}" y="${(parseFloat(zeroY)+3).toFixed(1)}" font-size="8" fill="#555" text-anchor="end">0</text>
+  <text x="${padL-3}" y="${(H-padB+3).toFixed(1)}" font-size="8" fill="#555" text-anchor="end">-2</text>
+  ${paths}${dots}${xLabels}
+</svg>`;
+}
+
+// 週次サマリーデータを取得
+function getWeeklySummary(weekOffset) {
+  const logs = getDailyLogs();
+  const today = new Date();
+  const days = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(today.getDate() - weekOffset * 7 - i);
+    const key = d.toISOString().split('T')[0];
+    const log = logs[key];
+    if (log && (log.mood || (log.todos && log.todos.length > 0) || log.note)) {
+      days.push({ date: key, label: `${d.getMonth()+1}/${d.getDate()}(${['日','月','火','水','木','金','土'][d.getDay()]})`, ...log });
+    }
+  }
+  if (days.length === 0) return null;
+  const scores = days.filter(d => d.moodScore !== undefined && d.moodScore !== null).map(d => d.moodScore);
+  const avg = scores.length > 0 ? (scores.reduce((a, b) => a + b, 0) / scores.length) : null;
+  const allTodos = [...new Set(days.flatMap(d => d.todos || []))];
+  return { days, avgScore: avg, allTodos };
 }
 
 // ウォッチリストの銘柄をテクニカル分析するハンドラー
@@ -5846,7 +5958,71 @@ function analyzeAndRecord(text) {
     }
   }
 
+  // 銘柄への質問 → ウォッチリスト自動表示（Geminiが会話、実データで補完）
+  const _sqWords = ['inpex', 'インペックス', 'インペクス', '東電', '東京電力', 'ディスコ',
+    'スクリーン', 'screen', 'トヨタ', '三菱ufj', '1605', '9501', '6146', '7735', '7203', '8306'];
+  if (_sqWords.some(k => lowerText.includes(k)) &&
+      /どう|状況|調子|推移|株価|今どんな/.test(lowerText) &&
+      !(lowerText.includes('ウォッチ') && /追加|削除/.test(lowerText))) {
+    setTimeout(updateDashboard, 300);
+  }
+
   // === 日々の記録システム ===
+
+  // 気分グラフ表示（Phase 2）
+  if (/気分グラフ|気分の推移|気分チャート|気分を見せて/.test(lowerText)) {
+    const recorded = getMoodHistory(30).filter(d => d.moodScore !== null).length;
+    if (recorded === 0) {
+      addMessage('assistant', '📊 まだ気分データがありません。毎日「今日は楽しかった」などと話しかけると蓄積されます。');
+    } else {
+      addSystemMessageWithHTML(getMoodGraphSVG(30));
+    }
+    return;
+  }
+
+  // 週次サマリー（Phase 2）
+  if (/先週|今週の記録|今週何した|先週何してた|週次サマリー|週のまとめ/.test(lowerText) &&
+      /記録|何した|振り返り|まとめ|サマリー/.test(lowerText)) {
+    const isLastWeek = /先週/.test(lowerText);
+    const summary = getWeeklySummary(isLastWeek ? 1 : 0);
+    const label = isLastWeek ? '先週' : '今週';
+    if (!summary) {
+      addMessage('assistant', `📅 ${label}の記録はまだありません。毎日「振り返り」で記録を続けると週次サマリーが表示されます。`);
+    } else {
+      let msg = `📅 ${label}のサマリー（${summary.days.length}日記録）\n`;
+      if (summary.avgScore !== null) {
+        msg += `${getMoodEmoji(Math.round(summary.avgScore))} 平均気分: ${summary.avgScore > 0 ? '+' : ''}${summary.avgScore.toFixed(1)}\n`;
+      }
+      msg += `━━━━━━━━━━━━\n`;
+      summary.days.forEach(d => {
+        const emoji = d.mood ? getMoodEmoji(d.moodScore || 0) : '・';
+        const moodStr = d.mood ? ` ${d.mood}` : '';
+        const todoStr = d.todos && d.todos.length > 0 ? ` / TODO: ${d.todos.join('、')}` : '';
+        msg += `${d.label}:${moodStr}${todoStr}\n`;
+      });
+      if (summary.allTodos.length > 0) {
+        msg += `\n📌 今週のTODO: ${summary.allTodos.join('、')}`;
+      }
+      addMessage('assistant', msg.trim());
+    }
+    return;
+  }
+
+  // 月次サマリー（Phase 2）
+  if (/先月の記録|先月何してた|月次サマリー/.test(lowerText)) {
+    const history = getMoodHistory(30);
+    const recorded = history.filter(d => d.moodScore !== null);
+    if (recorded.length === 0) {
+      addMessage('assistant', '📅 過去30日間の記録はまだありません。');
+    } else {
+      const avg = recorded.reduce((a, b) => a + b.moodScore, 0) / recorded.length;
+      let msg = `📅 過去30日のサマリー（${recorded.length}日記録）\n`;
+      msg += `${getMoodEmoji(Math.round(avg))} 平均気分スコア: ${avg > 0 ? '+' : ''}${avg.toFixed(1)}\n\n`;
+      addSystemMessageWithHTML(getMoodGraphSVG(30));
+      addMessage('assistant', msg.trim());
+    }
+    return;
+  }
 
   // 振り返りコマンド（記録を表示）
   if (lowerText.includes('振り返り') || lowerText.includes('今日の記録')) {
