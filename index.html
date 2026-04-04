@@ -1399,7 +1399,7 @@ window.addEventListener('load', async () => {
     addSystemMessage('APIキーを設定してください（右上の歯車アイコン）');
   } else {
     if (chatHistory.length === 0) {
-      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-04e / daily-log-phase1]');
+      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-04f / todo-pattern-expand]');
     } else {
       restoreHistory();
     }
@@ -1892,7 +1892,7 @@ async function saveSettings() {
 
   closeSettings();
   if (chatHistory.length === 0 && apiKey) {
-    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-04e / daily-log-phase1]');
+    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-04f / todo-pattern-expand]');
   }
 }
 
@@ -5890,7 +5890,9 @@ function analyzeAndRecord(text) {
   // TODOの自動検出
   const _todoPatterns = [
     /今日(?:の目標|やること|やる|する|しなければ|しないと)(?:は|が)?(.{2,20})/,
+    /明日(?:は|も)?(.{2,20})(?:しよう|やろう|するつもり|やるつもり|したい|やりたい|しようかと|やろうかと|作業しよう)/,
     /(.{2,20})(?:をやる|をする|しなきゃ|しないと|の予定|を完了)(?:予定|つもり|と思う)?/,
+    /(.{2,20})(?:しよう|やろう|するつもり|やるつもり)(?:と思う|かとは思う|かな|と考えてる)?/,
     /TODO[：:]\s*(.+)/i,
     /やること[：:]\s*(.+)/
   ];
