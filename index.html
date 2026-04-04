@@ -1391,7 +1391,7 @@ window.addEventListener('load', async () => {
     addSystemMessage('APIキーを設定してください（右上の歯車アイコン）');
   } else {
     if (chatHistory.length === 0) {
-      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-03-31d / morning-briefing]');
+      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-04a / stock-query-fix]');
     } else {
       restoreHistory();
     }
@@ -1494,6 +1494,15 @@ async function sendMessage() {
   // ローカルコマンドで処理すべきパターン → Geminiをスキップ
   // （analyzeAndRecordが処理し済み。Geminiが「未実装」と誤回答するのを防ぐ）
   const _lc = text.toLowerCase();
+
+  // 銘柄名＋質問ワードの検出（「INPEXどう？」「東電の状況は？」など）
+  const _knownStockWords = ['inpex', 'インペックス', 'インペクス', '東電', '東京電力', 'ディスコ',
+    'スクリーン', 'screen', 'トヨタ', '三菱ufj', '1605', '9501', '6146', '7735', '7203', '8306'];
+  const _hasKnownStock = _knownStockWords.some(k => _lc.includes(k));
+  const _isStockQuery = _hasKnownStock &&
+    /どう|状況|調子|推移|最近|いま|今どんな|見せて|確認|教えて|株価/.test(_lc) &&
+    !(_lc.includes('ウォッチ') && /追加|削除|登録/.test(_lc));
+
   const _isLocalCmd = (
     ((_lc.includes('ウォッチ') || _lc.includes('ウォッチリスト')) &&
      /追加|登録|入れて|加えて|削除|外して|消して|抜いて|確認|状態|見せて|表示/.test(_lc)) ||
@@ -1501,7 +1510,8 @@ async function sendMessage() {
     /自己チェック|状態診断/.test(_lc) ||
     ((_lc.includes('テクニカル') || _lc.includes('チャート分析') || _lc.includes('移動平均') ||
       _lc.includes('ボリンジャー') || _lc.includes('グラフ')) &&
-     (_lc.includes('分析') || _lc.includes('描いて') || _lc.includes('見せて') || _lc.includes('お願い')))
+     (_lc.includes('分析') || _lc.includes('描いて') || _lc.includes('見せて') || _lc.includes('お願い'))) ||
+    _isStockQuery
   );
 
   const sendBtn = document.getElementById('sendBtn');
@@ -1510,10 +1520,15 @@ async function sendMessage() {
   typing.classList.add('active');
 
   if (_isLocalCmd) {
-    // ローカル処理のみ（Gemini不要）
     typing.classList.remove('active');
     sendBtn.disabled = false;
     input.focus();
+    // 銘柄への質問の場合はKITTから短いコメントを返す（Geminiには送らない）
+    if (_isStockQuery) {
+      setTimeout(() => {
+        addMessage('assistant', '📊 チャートで確認しましょう！ウォッチリストの実データをご覧ください。数値や分析はアプリのグラフが正確です。');
+      }, 200);
+    }
     setTimeout(updateDashboard, 500);
     return;
   }
@@ -1860,7 +1875,7 @@ async function saveSettings() {
 
   closeSettings();
   if (chatHistory.length === 0 && apiKey) {
-    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-03-31d / morning-briefing]');
+    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-04a / stock-query-fix]');
   }
 }
 
@@ -5088,8 +5103,22 @@ function analyzeAndRecord(text) {
     }, 100);
   }
 
-  // === テクニカル分析・グラフ描画コマンド ===
-  if (lowerText.includes('テクニカル') || lowerText.includes('移動平均') ||
+  // === テクニカル分析・グラフ描画コマンド（自然な質問「〇〇どう？」も含む） ===
+  const _sqMap = {
+    'inpex': '1605.T', 'インペックス': '1605.T', 'インペクス': '1605.T',
+    '東電': '9501.T', '東京電力': '9501.T',
+    'ディスコ': '6146.T',
+    'スクリーン': '7735.T', 'screen': '7735.T',
+    'トヨタ': '7203.T',
+    '三菱ufj': '8306.T',
+  };
+  const _sqHasStock = Object.keys(_sqMap).some(k => lowerText.includes(k));
+  const _sqIsQuery = _sqHasStock &&
+    /どう|状況|調子|推移|最近|いま|今どんな|見せて|確認|教えて|株価/.test(lowerText) &&
+    !lowerText.includes('テクニカル') && !lowerText.includes('グラフ') &&
+    !(lowerText.includes('ウォッチ') && /追加|削除|登録/.test(lowerText));
+
+  if (_sqIsQuery || lowerText.includes('テクニカル') || lowerText.includes('移動平均') ||
       lowerText.includes('ボリンジャー') || lowerText.includes('チャート分析') ||
       lowerText.includes('グラフ') ||
       (lowerText.includes('シグナル') && (lowerText.includes('株') || lowerText.includes('銘柄')))) {
