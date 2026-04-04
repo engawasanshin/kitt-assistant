@@ -558,6 +558,14 @@ body {
     </div>
   </div>
 
+  <!-- 日々の記録エリア -->
+  <div id="dailyLogArea" style="margin-top: 12px; display: none;">
+    <div style="font-size: 12px; color: #88aaff; margin-bottom: 6px; border-bottom: 1px solid #2a2a2a; padding-bottom: 4px;">
+      📔 今日の記録
+    </div>
+    <div id="dailyLogContent" style="font-size: 12px; color: #ccc; line-height: 1.6;"></div>
+  </div>
+
   <!-- ウォッチリスト表示エリア -->
   <div id="watchlistArea" style="margin-top: 12px; display: none;">
     <div style="display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: #ff8866; margin-bottom: 8px; border-bottom: 1px solid #2a2a2a; padding-bottom: 4px;">
@@ -1391,7 +1399,7 @@ window.addEventListener('load', async () => {
     addSystemMessage('APIキーを設定してください（右上の歯車アイコン）');
   } else {
     if (chatHistory.length === 0) {
-      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-04d / weekend-news-memory]');
+      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-04e / daily-log-phase1]');
     } else {
       restoreHistory();
     }
@@ -1514,7 +1522,7 @@ async function sendMessage() {
     ((_lc.includes('ウォッチ') || _lc.includes('ウォッチリスト')) &&
      /追加|登録|入れて|加えて|削除|外して|消して|抜いて|確認|状態|見せて|表示/.test(_lc)) ||
     /キャッシュリセット|キャッシュ削除/.test(_lc) ||
-    /自己チェック|状態診断|ブリーフィング/.test(_lc) ||
+    /自己チェック|状態診断|ブリーフィング|振り返り|今日の記録/.test(_lc) ||
     ((_lc.includes('テクニカル') || _lc.includes('移動平均') ||
       _lc.includes('ボリンジャー') || _lc.includes('グラフ') || _lc.includes('チャート')) &&
      /分析して|見せて|描いて|お願い|表示して|チェックして/.test(_lc)) ||
@@ -1884,7 +1892,7 @@ async function saveSettings() {
 
   closeSettings();
   if (chatHistory.length === 0 && apiKey) {
-    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-04d / weekend-news-memory]');
+    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-04e / daily-log-phase1]');
   }
 }
 
@@ -3006,6 +3014,100 @@ ${r(sma5).join(', ')}
   localStorage.setItem('kitt_technical_analysis_history', JSON.stringify(history));
 
   return { ticker, hist, indicators: { latest, latestSma5, latestSma25, latestBB, crossSignal }, analysis, analyzedAt: new Date().toISOString() };
+}
+
+// ============================================================
+// 📔 日々の記録システム (Phase 1)
+// ============================================================
+
+function getDailyLogs() {
+  return JSON.parse(localStorage.getItem('kitt_daily_log') || '{}');
+}
+function getTodayLog() {
+  const today = new Date().toISOString().split('T')[0];
+  return getDailyLogs()[today] || null;
+}
+function saveTodayLog(data) {
+  const today = new Date().toISOString().split('T')[0];
+  const logs = getDailyLogs();
+  logs[today] = { ...(logs[today] || {}), ...data, lastUpdated: new Date().toISOString() };
+  localStorage.setItem('kitt_daily_log', JSON.stringify(logs));
+}
+
+const MOOD_MAP = {
+  '最高': 2, 'サイコー': 2, '超楽しかった': 2, '最高の一日': 2,
+  '楽しかった': 1, '良かった': 1, 'よかった': 1, '嬉しかった': 1, 'うれしかった': 1, '充実した': 1,
+  '普通': 0, 'まあまあ': 0, 'そこそこ': 0, '平凡': 0,
+  '疲れた': -1, 'つかれた': -1, 'しんどい': -1, '微妙': -1, 'いまいち': -1, 'だるい': -1,
+  '最悪': -2, 'きつかった': -2, 'ひどかった': -2, 'しんどすぎ': -2
+};
+
+function parseMoodFromText(text) {
+  const lower = text.toLowerCase();
+  for (const [word, score] of Object.entries(MOOD_MAP)) {
+    if (lower.includes(word)) return { mood: word, moodScore: score };
+  }
+  return null;
+}
+
+function getMoodEmoji(score) {
+  if (score >= 2) return '😄';
+  if (score >= 1) return '🙂';
+  if (score === 0) return '😐';
+  if (score >= -1) return '😔';
+  return '😞';
+}
+
+// 夜の問いかけ（20時以降・1日1回）
+function checkEveningPrompt() {
+  const now = new Date();
+  const hour = now.getHours();
+  if (hour < 20) return;
+
+  const today = now.toISOString().split('T')[0];
+  const lastPrompt = localStorage.getItem('kitt_daily_prompt_last');
+  if (lastPrompt === today) return;
+
+  // 既に記録がある場合はスキップ
+  const log = getTodayLog();
+  if (log && (log.mood || log.note)) return;
+
+  // ユーザーが今日会話していない場合はスキップ
+  const todayMessages = chatHistory.filter(m => m.role === 'user' &&
+    m.timestamp && m.timestamp.startsWith(today));
+  if (todayMessages.length === 0) return;
+
+  localStorage.setItem('kitt_daily_prompt_last', today);
+  setTimeout(() => {
+    addMessage('assistant', '📔 塩川さん、今日一日お疲れ様でした。今日はどんな一日でしたか？一言でOKです（例:「疲れた」「楽しかった」「普通」）。');
+  }, 1000);
+}
+
+// ダッシュボードに今日のログを表示
+function displayDailyLog() {
+  const area = document.getElementById('dailyLogArea');
+  const content = document.getElementById('dailyLogContent');
+  if (!area || !content) return;
+
+  const log = getTodayLog();
+  if (!log) { area.style.display = 'none'; return; }
+
+  let html = '';
+  if (log.mood) {
+    const emoji = getMoodEmoji(log.moodScore || 0);
+    const sign = (log.moodScore || 0) > 0 ? '+' : '';
+    html += `<div>${emoji} 気分: <span style="color:#88aaff;font-weight:bold;">${log.mood}</span> (${sign}${log.moodScore || 0})</div>`;
+  }
+  if (log.todos && log.todos.length > 0) {
+    html += `<div style="margin-top:4px;">📌 TODO: ${log.todos.map(t => `<span style="color:#ffcc88;">${t}</span>`).join('、')}</div>`;
+  }
+  if (log.note) {
+    html += `<div style="margin-top:4px;color:#999;font-size:11px;">📝 ${log.note.length > 40 ? log.note.substring(0, 40) + '...' : log.note}</div>`;
+  }
+  if (!html) { area.style.display = 'none'; return; }
+
+  content.innerHTML = html;
+  area.style.display = 'block';
 }
 
 // ウォッチリストの銘柄をテクニカル分析するハンドラー
@@ -5743,6 +5845,72 @@ function analyzeAndRecord(text) {
       }, 100);
     }
   }
+
+  // === 日々の記録システム ===
+
+  // 振り返りコマンド（記録を表示）
+  if (lowerText.includes('振り返り') || lowerText.includes('今日の記録')) {
+    const log = getTodayLog();
+    if (!log || (!log.mood && !log.todos && !log.note)) {
+      addMessage('assistant', '📔 今日の記録はまだありません。気分（例：「今日は楽しかった」）やTODO（例：「今日の目標は資料作成」）を教えてください。');
+    } else {
+      let msg = '📔 今日の記録です:\n';
+      if (log.mood) {
+        const emoji = getMoodEmoji(log.moodScore || 0);
+        msg += `${emoji} 気分: ${log.mood} (${log.moodScore > 0 ? '+' : ''}${log.moodScore || 0})\n`;
+      }
+      if (log.todos && log.todos.length > 0) {
+        msg += `📌 TODO: ${log.todos.join('、')}\n`;
+      }
+      if (log.note) {
+        msg += `📝 メモ: ${log.note}`;
+      }
+      addMessage('assistant', msg.trim());
+    }
+    displayDailyLog();
+    return;
+  }
+
+  // 気分の自動検出（夕方以降の問いかけへの返答 or 自発的な気分報告）
+  const _moodResult = parseMoodFromText(text);
+  if (_moodResult) {
+    const existing = getTodayLog();
+    // 気分がまだ記録されていない、またはKITTが問いかけた後の返答
+    const _lastPrompt = localStorage.getItem('kitt_daily_prompt_last');
+    const _today = new Date().toISOString().split('T')[0];
+    if (!existing || !existing.mood || _lastPrompt === _today) {
+      saveTodayLog({ mood: _moodResult.mood, moodScore: _moodResult.moodScore });
+      const emoji = getMoodEmoji(_moodResult.moodScore);
+      addMessage('assistant', `${emoji} 「${_moodResult.mood}」ですね、記録しました。何かあれば話してください。`);
+      displayDailyLog();
+      return;
+    }
+  }
+
+  // TODOの自動検出
+  const _todoPatterns = [
+    /今日(?:の目標|やること|やる|する|しなければ|しないと)(?:は|が)?(.{2,20})/,
+    /(.{2,20})(?:をやる|をする|しなきゃ|しないと|の予定|を完了)(?:予定|つもり|と思う)?/,
+    /TODO[：:]\s*(.+)/i,
+    /やること[：:]\s*(.+)/
+  ];
+  let _detectedTodo = null;
+  for (const pat of _todoPatterns) {
+    const m = text.match(pat);
+    if (m && m[1] && m[1].length >= 2 && m[1].length <= 30) {
+      _detectedTodo = m[1].trim();
+      break;
+    }
+  }
+  if (_detectedTodo) {
+    const existing = getTodayLog();
+    const todos = (existing && existing.todos) ? existing.todos : [];
+    if (!todos.includes(_detectedTodo)) {
+      todos.push(_detectedTodo);
+      saveTodayLog({ todos });
+      displayDailyLog();
+    }
+  }
 }
 
 // --- Dynamic Dashboard System ---
@@ -6035,6 +6203,9 @@ function updateDashboard() {
     const _wa = document.getElementById('watchlistArea');
     if (_wa) _wa.style.display = 'none';
   }
+
+  // 日々の記録を表示
+  displayDailyLog();
 }
 
 // 時間帯別挨拶を生成
@@ -6103,6 +6274,9 @@ document.addEventListener('DOMContentLoaded', () => {
   setInterval(updateDashboard, 60000);
   // 1秒ごとに時計更新
   setInterval(updateClock, 1000);
+  // 5分ごとに夜の問いかけチェック
+  setInterval(checkEveningPrompt, 5 * 60 * 1000);
+  checkEveningPrompt(); // 起動時にも即チェック
 
   // 飲み会モード: 未確認の候補をチェック
   checkPendingConfirmations();
