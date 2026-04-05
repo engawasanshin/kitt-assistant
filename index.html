@@ -589,6 +589,7 @@ body {
 
 <div class="input-area">
   <button onclick="showCommandList()" title="コマンド一覧" style="background:#1a1a2e;color:#88aaff;border:1px solid #2a2a4a;border-radius:6px;font-size:14px;font-weight:bold;padding:0 10px;cursor:pointer;flex-shrink:0;">?</button>
+  <button id="speechToggleBtn" onclick="toggleSpeech()" title="音声読み上げON/OFF" style="background:#1a1a1a;color:#444;border:1px solid #2a2a2a;border-radius:6px;font-size:14px;padding:0 10px;cursor:pointer;flex-shrink:0;">🔊</button>
   <textarea id="userInput" rows="1" placeholder="K.I.T.T.に話しかける..."
     onkeydown="handleKeyDown(event)" oninput="autoResize(this)"></textarea>
   <button id="sendBtn" onclick="sendMessage()">送信</button>
@@ -1258,6 +1259,25 @@ function getAppStateContext() {
     }
   } catch(e) { ctx += '今日の記録: 取得エラー\n'; }
 
+  // 体重記録（直近7日）
+  try {
+    const _wlog = getWeightHistory(7).filter(d => d.kg !== null);
+    if (_wlog.length > 0) {
+      const _latest = _wlog[_wlog.length - 1];
+      ctx += `\n【体重記録】最新: ${_latest.kg}kg（${_latest.date}）/ 直近${_wlog.length}日記録済み\n`;
+    } else {
+      ctx += '\n【体重記録】未記録\n';
+    }
+  } catch(e) {}
+
+  // 天気・為替（キャッシュがあれば）
+  try {
+    const wCache = JSON.parse(localStorage.getItem('kitt_weather_cache') || 'null');
+    if (wCache && wCache.data) ctx += `【天気】${formatWeather(wCache.data)}（キャッシュ）\n`;
+    const fCache = JSON.parse(localStorage.getItem('kitt_forex_cache') || 'null');
+    if (fCache && fCache.data) ctx += `【為替】${formatForex(fCache.data)}（${fCache.data.date}）\n`;
+  } catch(e) {}
+
   // 直近の場所記録（最新3件）
   try {
     const _placeRecs = getPlaceRecords();
@@ -1490,7 +1510,7 @@ window.addEventListener('load', async () => {
     addSystemMessage('APIキーを設定してください（右上の歯車アイコン）');
   } else {
     if (chatHistory.length === 0) {
-      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-05j / export-place-memo]');
+      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-05k / weather-forex-weight-speech-expense]');
     } else {
       restoreHistory();
     }
@@ -1515,15 +1535,23 @@ function addMessage(role, text) {
   div.className = `message ${role}`;
   const label = role === 'user' ? 'You' : 'K.I.T.T.';
 
-  // タイムスタンプを追加
   const now = new Date();
   const hours = String(now.getHours()).padStart(2, '0');
   const minutes = String(now.getMinutes()).padStart(2, '0');
   const timeStamp = `${hours}:${minutes}`;
 
-  div.innerHTML = `<div class="label">${label} <span style="font-size: 10px; color: #666; margin-left: 4px;">${timeStamp}</span></div>${escapeHtml(text)}`;
+  const speakBtnHtml = role === 'assistant'
+    ? `<button onclick="speakText(this.closest('.message').querySelector('.msg-body').textContent)" title="読み上げ"
+        style="background:none;border:none;color:#333;font-size:11px;cursor:pointer;padding:0 4px;vertical-align:middle;">🔊</button>`
+    : '';
+
+  div.innerHTML = `<div class="label">${label} <span style="font-size:10px;color:#666;margin-left:4px;">${timeStamp}</span>${speakBtnHtml}</div><span class="msg-body">${escapeHtml(text)}</span>`;
   chatArea.appendChild(div);
   chatArea.scrollTop = chatArea.scrollHeight;
+
+  if (role === 'assistant' && typeof _speechEnabled !== 'undefined' && _speechEnabled) {
+    speakText(text);
+  }
 }
 
 function addSystemMessage(text) {
@@ -1626,6 +1654,10 @@ async function sendMessage() {
     ((_lc.includes('テクニカル') && /分析して|見せて|お願い|チェックして/.test(_lc)) ||
      ((_lc.includes('移動平均') || _lc.includes('ボリンジャー')) && /見せて|表示して|分析して/.test(_lc)) ||
      ((_lc.includes('グラフ') || _lc.includes('チャート')) && /見せて|描いて|表示して/.test(_lc))) ||
+    /体重グラフ|体重.*推移|体重.*見せて|体重.*記録/.test(_lc) ||
+    /今日の天気|天気.*教えて|天気.*どう|天気は/.test(_lc) ||
+    /為替|ドル円|元円|レート/.test(_lc) ||
+    /経費集計|出張経費|経費.*見せて|経費.*合計/.test(_lc) ||
     /エクスポート|バックアップ|書き出し|データ保存/.test(_lc) ||
     /場所.*記録|食事.*記録|記録.*場所|ここを記録|場所.*履歴|食事.*履歴|場所.*見せて|place.*record/.test(_lc) ||
     /出張モード|旅行モード/.test(_lc) ||
@@ -1995,7 +2027,7 @@ async function saveSettings() {
 
   closeSettings();
   if (chatHistory.length === 0 && apiKey) {
-    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-05j / export-place-memo]');
+    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-05k / weather-forex-weight-speech-expense]');
   }
 }
 
@@ -2619,11 +2651,16 @@ async function checkAndAutoUpdateWatchlist() {
       ? `\n（${noPrice.map(i => i.name).join('・')}は価格取得中です）`
       : '';
 
-    const body = priceLines.length > 0
+    const stockBody = priceLines.length > 0
       ? `ウォッチリストを更新しました。\n\n${priceLines.join('\n')}${attention}${noPriceNote}`
       : `ウォッチリストの価格確認を試みましたが、現在取得できなかった銘柄があります。後ほど再試行します。`;
 
-    addMessage('assistant', `${greeting}、塩川さん。📊 ${body}`);
+    // 天気・為替を並行取得
+    const [weather, forex] = await Promise.allSettled([fetchWeather(), fetchForexRates()]);
+    const weatherStr = weather.status === 'fulfilled' && weather.value ? '\n\n' + formatWeather(weather.value) : '';
+    const forexStr = forex.status === 'fulfilled' && forex.value ? '\n' + formatForex(forex.value) : '';
+
+    addMessage('assistant', `${greeting}、塩川さん。📊 ${stockBody}${weatherStr}${forexStr}`);
 
     console.log('[Auto Update] 完了:', result.message);
   } catch (err) {
@@ -3229,14 +3266,23 @@ function savePlaceRecord(record) {
   localStorage.setItem('kitt_place_records', JSON.stringify(records));
 }
 
-// 場所記録のメモを更新
-function addPlaceNote(id, note) {
+// 場所記録のメモ・金額を更新
+function addPlaceNote(id, note, amount) {
   const records = getPlaceRecords();
   const idx = records.findIndex(r => r.id === id);
   if (idx !== -1) {
-    records[idx].note = note;
+    if (note !== undefined) records[idx].note = note;
+    if (amount && amount > 0) records[idx].amount = amount;
     localStorage.setItem('kitt_place_records', JSON.stringify(records));
   }
+}
+
+// 経費集計
+function getTripExpenseSummary() {
+  const records = getPlaceRecords().filter(r => r.amount && r.amount > 0);
+  if (records.length === 0) return null;
+  const total = records.reduce((s, r) => s + r.amount, 0);
+  return { records, total, count: records.length };
 }
 
 // GPS取得→保存→メモ入力フォームまで表示（ボタンから呼ぶ）
@@ -3274,21 +3320,206 @@ async function recordCurrentLocation(contextText) {
     infoHtml += `<span style="color:#ff8866;font-size:11px;">⚠️ GPS取得失敗（時刻・内容のみ記録）</span>`;
   }
 
-  // メモ入力フォーム
+  // メモ・金額入力フォーム
   const memoId = `placeNote_${recordId}`;
+  const amtId = `placeAmt_${recordId}`;
   infoHtml += `
 <div style="margin-top:8px;">
   <input id="${memoId}" type="text" placeholder="🍽 何を食べた？店名など（省略可）"
+    style="width:100%;background:#111;color:#e0e0e0;border:1px solid #2a3a2a;border-radius:4px;padding:5px 8px;font-size:12px;font-family:'Courier New',monospace;box-sizing:border-box;margin-bottom:4px;">
+  <input id="${amtId}" type="number" placeholder="💴 金額（円）省略可"
     style="width:100%;background:#111;color:#e0e0e0;border:1px solid #2a3a2a;border-radius:4px;padding:5px 8px;font-size:12px;font-family:'Courier New',monospace;box-sizing:border-box;">
   <button onclick="
-    const v=document.getElementById('${memoId}').value.trim();
-    if(v){addPlaceNote('${recordId}',v);this.previousElementSibling.disabled=true;this.textContent='✅ 保存済み';this.disabled=true;}
+    const note=document.getElementById('${memoId}').value.trim();
+    const amt=parseFloat(document.getElementById('${amtId}').value)||0;
+    addPlaceNote('${recordId}', note, amt);
+    this.previousElementSibling.disabled=true;
+    this.previousElementSibling.previousElementSibling.disabled=true;
+    this.textContent='✅ 保存済み';this.disabled=true;
   " style="margin-top:4px;background:#1a3a2a;color:#88ffcc;border:1px solid #2a5a3a;border-radius:4px;padding:4px 12px;cursor:pointer;font-size:11px;font-family:'Courier New',monospace;">
-    メモ保存
+    保存
   </button>
 </div>`;
 
   addSystemMessageWithHTML(infoHtml);
+}
+
+// ============================================================
+// 音声読み上げ（Web Speech API）
+// ============================================================
+
+let _speechEnabled = localStorage.getItem('kitt_speech_enabled') === '1';
+
+function speakText(text) {
+  if (!window.speechSynthesis) return;
+  window.speechSynthesis.cancel();
+  const utter = new SpeechSynthesisUtterance(text);
+  utter.lang = 'ja-JP';
+  utter.rate = 1.1;
+  utter.pitch = 1.05;
+  const trySpeak = () => {
+    const voices = window.speechSynthesis.getVoices();
+    const jaVoice = voices.find(v => v.lang === 'ja-JP') || voices.find(v => v.lang.startsWith('ja'));
+    if (jaVoice) utter.voice = jaVoice;
+    window.speechSynthesis.speak(utter);
+  };
+  if (window.speechSynthesis.getVoices().length > 0) {
+    trySpeak();
+  } else {
+    window.speechSynthesis.onvoiceschanged = trySpeak;
+  }
+}
+
+function toggleSpeech() {
+  _speechEnabled = !_speechEnabled;
+  localStorage.setItem('kitt_speech_enabled', _speechEnabled ? '1' : '0');
+  const btn = document.getElementById('speechToggleBtn');
+  if (btn) {
+    btn.style.color = _speechEnabled ? '#ff2200' : '#444';
+    btn.style.background = _speechEnabled ? '#1a0000' : '#1a1a1a';
+  }
+  if (!_speechEnabled && window.speechSynthesis) window.speechSynthesis.cancel();
+  addSystemMessage(_speechEnabled ? '🔊 音声読み上げ ON（KITTの返答を読み上げます）' : '🔇 音声読み上げ OFF');
+}
+
+// ============================================================
+// 体重記録システム
+// ============================================================
+
+function getWeightLog() {
+  return JSON.parse(localStorage.getItem('kitt_weight_log') || '{}');
+}
+
+function saveWeight(kg) {
+  const log = getWeightLog();
+  const today = new Date().toISOString().split('T')[0];
+  log[today] = { kg, timestamp: new Date().toISOString() };
+  localStorage.setItem('kitt_weight_log', JSON.stringify(log));
+  return today;
+}
+
+function getWeightHistory(days) {
+  const log = getWeightLog();
+  const result = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const key = d.toISOString().split('T')[0];
+    result.push({
+      date: key,
+      dateLabel: `${d.getMonth()+1}/${d.getDate()}`,
+      kg: log[key] ? log[key].kg : null
+    });
+  }
+  return result;
+}
+
+function getWeightGraphSVG(days) {
+  const history = getWeightHistory(days);
+  const withData = history.filter(d => d.kg !== null);
+  if (withData.length < 2) {
+    return '<div style="color:#aaa;font-size:12px;">⚖️ データが2日分以上必要です。</div>';
+  }
+  const W = 300, H = 110, padL = 36, padR = 8, padT = 10, padB = 26;
+  const minKg = Math.min(...withData.map(d => d.kg)) - 0.5;
+  const maxKg = Math.max(...withData.map(d => d.kg)) + 0.5;
+  const xScale = i => padL + (i / (history.length - 1)) * (W - padL - padR);
+  const yScale = kg => padT + (1 - (kg - minKg) / (maxKg - minKg)) * (H - padT - padB);
+  let path = ''; let pen = true;
+  history.forEach((d, i) => {
+    if (d.kg === null) { pen = true; return; }
+    path += pen ? `M${xScale(i).toFixed(1)},${yScale(d.kg).toFixed(1)}` : `L${xScale(i).toFixed(1)},${yScale(d.kg).toFixed(1)}`;
+    pen = false;
+  });
+  const labelStep = Math.max(1, Math.ceil(days / 6));
+  const xLabels = history.filter((_, i) => i % labelStep === 0 || i === history.length - 1)
+    .map(d => `<text x="${xScale(history.indexOf(d)).toFixed(1)}" y="${H - padB + 14}" text-anchor="middle" fill="#555" font-size="8">${d.dateLabel}</text>`).join('');
+  const yMid = (minKg + maxKg) / 2;
+  const yLabels = [minKg + 0.3, yMid, maxKg - 0.3].map(kg =>
+    `<text x="${padL - 2}" y="${yScale(kg).toFixed(1)}" dy="3" text-anchor="end" fill="#555" font-size="8">${kg.toFixed(1)}</text>`).join('');
+  const latest = withData[withData.length - 1];
+  const first = withData[0];
+  const diff = (latest.kg - first.kg).toFixed(1);
+  const diffStr = `${diff > 0 ? '+' : ''}${diff}kg`;
+  const dots = withData.map(d => {
+    const i = history.findIndex(h => h.date === d.date);
+    return `<circle cx="${xScale(i).toFixed(1)}" cy="${yScale(d.kg).toFixed(1)}" r="3" fill="#88ffcc"/>`;
+  }).join('');
+  return `<div style="font-size:12px;color:#e0e0e0;">
+  <div style="color:#88ffcc;margin-bottom:4px;">⚖️ 体重推移（${days}日）　最新: ${latest.kg}kg　${diffStr}</div>
+  <svg width="${W}" height="${H}" style="background:#0a0a12;border-radius:6px;display:block;">
+    <line x1="${padL}" y1="${padT}" x2="${padL}" y2="${H-padB}" stroke="#1a1a2a" stroke-width="1"/>
+    <line x1="${padL}" y1="${H-padB}" x2="${W-padR}" y2="${H-padB}" stroke="#1a1a2a" stroke-width="1"/>
+    ${yLabels}${xLabels}
+    <path d="${path}" fill="none" stroke="#88ffcc" stroke-width="2" stroke-linejoin="round"/>
+    ${dots}
+  </svg></div>`;
+}
+
+// ============================================================
+// 天気情報（OpenMeteo API・無料・APIキー不要）
+// ============================================================
+
+const WEATHER_CODES = {
+  0:['快晴','☀️'],1:['晴れ','🌤'],2:['曇りがち','⛅'],3:['曇り','☁️'],
+  45:['霧','🌫'],48:['霧','🌫'],
+  51:['小雨','🌦'],53:['雨','🌧'],55:['強雨','🌧'],
+  61:['小雨','🌦'],63:['雨','🌧'],65:['大雨','⛈'],
+  71:['小雪','🌨'],73:['雪','❄️'],75:['大雪','❄️'],
+  80:['にわか雨','🌦'],81:['雨','🌧'],82:['大雨','⛈'],
+  95:['雷雨','⛈'],96:['雷雨','⛈'],99:['雷雨','⛈']
+};
+
+async function fetchWeather() {
+  const cache = JSON.parse(localStorage.getItem('kitt_weather_cache') || 'null');
+  if (cache && Date.now() - cache.ts < 3600000) return cache.data;
+  const locs = getUserLocations();
+  const lat = (locs.home && locs.home.lat) ? locs.home.lat : 35.6762;
+  const lng = (locs.home && locs.home.lng) ? locs.home.lng : 139.6503;
+  try {
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current=temperature_2m,weather_code,precipitation&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=auto&forecast_days=1`;
+    const res = await fetch(url);
+    const json = await res.json();
+    const data = {
+      temp: Math.round(json.current.temperature_2m),
+      code: json.current.weather_code,
+      maxTemp: Math.round(json.daily.temperature_2m_max[0]),
+      minTemp: Math.round(json.daily.temperature_2m_min[0]),
+      rainProb: json.daily.precipitation_probability_max[0]
+    };
+    localStorage.setItem('kitt_weather_cache', JSON.stringify({ ts: Date.now(), data }));
+    return data;
+  } catch(e) { return null; }
+}
+
+function formatWeather(w) {
+  if (!w) return '';
+  const [desc, emoji] = WEATHER_CODES[w.code] || ['不明', '🌡'];
+  return `${emoji} ${desc} ${w.temp}°C（${w.minTemp}↓${w.maxTemp}↑）☔${w.rainProb}%`;
+}
+
+// ============================================================
+// 為替レート（Frankfurter API・無料・APIキー不要）
+// ============================================================
+
+async function fetchForexRates() {
+  const cache = JSON.parse(localStorage.getItem('kitt_forex_cache') || 'null');
+  if (cache && Date.now() - cache.ts < 3600000) return cache.data;
+  try {
+    const res = await fetch('https://api.frankfurter.app/latest?from=USD&to=JPY,CNY');
+    const json = await res.json();
+    const usdJpy = json.rates.JPY;
+    const usdCny = json.rates.CNY;
+    const cnyJpy = usdJpy / usdCny;
+    const data = { usdJpy: usdJpy.toFixed(1), cnyJpy: cnyJpy.toFixed(2), date: json.date };
+    localStorage.setItem('kitt_forex_cache', JSON.stringify({ ts: Date.now(), data }));
+    return data;
+  } catch(e) { return null; }
+}
+
+function formatForex(f) {
+  if (!f) return '';
+  return `💱 $1=${f.usdJpy}円　¥1元=${f.cnyJpy}円`;
 }
 
 // ============================================================
@@ -3312,6 +3543,7 @@ function exportAllDataJSON() {
     placeRecords: getPlaceRecords(),
     reminders: getReminders(),
     dailyLogs: JSON.parse(localStorage.getItem('kitt_daily_log') || '{}'),
+    weightLog: getWeightLog(),
     watchlist: JSON.parse(localStorage.getItem('kitt_investment_watchlist') || '[]'),
   };
   downloadFile(`kitt_backup_${today}.json`, JSON.stringify(data, null, 2), 'application/json');
@@ -3321,12 +3553,12 @@ function exportAllDataJSON() {
 function exportPlaceRecordsCSV() {
   const records = getPlaceRecords();
   if (records.length === 0) return false;
-  const header = '日時,内容,メモ,緯度,経度,住所';
+  const header = '日時,内容,メモ,金額,緯度,経度,住所';
   const rows = records.map(r => {
     const d = new Date(r.timestamp);
     const dateStr = `${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
     const escape = s => `"${(s||'').replace(/"/g,'""')}"`;
-    return [dateStr, escape(r.text), escape(r.note), r.lat||'', r.lng||'', escape(r.address)].join(',');
+    return [dateStr, escape(r.text), escape(r.note), r.amount||'', r.lat||'', r.lng||'', escape(r.address)].join(',');
   });
   const today = new Date().toISOString().split('T')[0];
   downloadFile(`kitt_places_${today}.csv`, '\uFEFF' + header + '\n' + rows.join('\n'), 'text/csv');
@@ -3554,12 +3786,22 @@ function showCommandList() {
     レシートOCR後「<span style="color:#fff;">このレシートを記録して</span>」
   </div>
 
+  <div style="color:#aaddff;margin-top:6px;margin-bottom:2px;">🌤 天気・為替・体重</div>
+  <div style="color:#aaa;padding-left:8px;">
+    「<span style="color:#fff;">今日の天気</span>」→ 気温・天気・降水確率<br>
+    「<span style="color:#fff;">為替レート</span>」「<span style="color:#fff;">ドル円</span>」「<span style="color:#fff;">元円</span>」→ 最新レート<br>
+    「<span style="color:#fff;">体重は〇〇kg</span>」→ 体重を記録<br>
+    「<span style="color:#fff;">体重グラフ</span>」→ 過去30日の推移グラフ<br>
+    🔊 入力欄左の「🔊」ボタンで音声読み上げON/OFF
+  </div>
+
   <div style="color:#88ffcc;margin-top:6px;margin-bottom:2px;">📍 食事・場所記録</div>
   <div style="color:#aaa;padding-left:8px;">
     「<span style="color:#fff;">ここで〇〇食べてる</span>」→ 場所記録を提案（GPS+内容）<br>
     「<span style="color:#fff;">ここを記録して</span>」→ 即GPS取得して記録<br>
     「<span style="color:#fff;">場所の記録を見せて</span>」→ 履歴一覧（Google Mapsリンク付き）<br>
-    ✈️ 「<span style="color:#fff;">出張モードON/OFF</span>」→ 飲み会GPS検出の停止/再開
+    ✈️ 「<span style="color:#fff;">出張モードON/OFF</span>」→ 飲み会GPS検出の停止/再開<br>
+    「<span style="color:#fff;">経費集計</span>」「<span style="color:#fff;">出張経費</span>」→ 金額入力済み記録の合計
   </div>
 
   <div style="color:#88ddcc;margin-top:6px;margin-bottom:2px;">📅 リマインダー</div>
@@ -6570,6 +6812,76 @@ function analyzeAndRecord(text) {
     return;
   }
 
+  // === 天気情報 ===
+  if (/今日の天気|天気.*教えて|天気.*どう|天気は/.test(lowerText)) {
+    (async () => {
+      const w = await fetchWeather();
+      if (w) {
+        addMessage('assistant', `今日の天気をお伝えします！\n\n${formatWeather(w)}\n\n傘は${w.rainProb >= 50 ? '必要そうです ☔' : '不要かと思います 🌂'}`);
+      } else {
+        addMessage('assistant', '天気情報の取得に失敗しました。ネットワークを確認してください。');
+      }
+    })();
+    return;
+  }
+
+  // === 為替レート ===
+  if (/為替|ドル円|元円|レート/.test(lowerText)) {
+    (async () => {
+      const f = await fetchForexRates();
+      if (f) {
+        addMessage('assistant', `現在の為替レートです（${f.date}）\n\n💵 1ドル = ${f.usdJpy}円\n🇨🇳 1元 = ${f.cnyJpy}円\n\n（1時間キャッシュ）`);
+      } else {
+        addMessage('assistant', '為替レートの取得に失敗しました。しばらく後に再試行してください。');
+      }
+    })();
+    return;
+  }
+
+  // === 体重記録 ===
+  // 体重グラフ表示
+  if (/体重グラフ|体重.*推移|体重.*見せて/.test(lowerText)) {
+    const history = getWeightHistory(30).filter(d => d.kg !== null);
+    if (history.length === 0) {
+      addMessage('assistant', '⚖️ 体重データがまだありません。「今日の体重は〇〇kg」と話しかけると記録されます。');
+    } else {
+      addSystemMessageWithHTML(getWeightGraphSVG(30));
+    }
+    return;
+  }
+  // 体重の記録（「体重〇〇kg」「〇〇キロだった」）
+  const _weightMatch = text.match(/体重[はが]?\s*(\d+\.?\d*)\s*(?:kg|ｋｇ|キロ)|(\d+\.?\d*)\s*(?:kg|ｋｇ|キロ).*体重/i);
+  if (_weightMatch) {
+    const kg = parseFloat(_weightMatch[1] || _weightMatch[2]);
+    if (kg > 30 && kg < 200) {
+      saveWeight(kg);
+      const log = getWeightHistory(7).filter(d => d.kg !== null);
+      const prev = log.length >= 2 ? log[log.length - 2].kg : null;
+      const diffStr = prev ? `（前回比 ${kg > prev ? '+' : ''}${(kg - prev).toFixed(1)}kg）` : '';
+      addMessage('assistant', `⚖️ 体重を記録しました。${kg}kg ${diffStr}\n「体重グラフ」で推移を確認できます。`);
+      return;
+    }
+  }
+
+  // === 経費集計 ===
+  if (/経費集計|出張経費|経費.*見せて|経費.*合計/.test(lowerText)) {
+    const summary = getTripExpenseSummary();
+    if (!summary) {
+      addMessage('assistant', '💴 金額が登録された場所記録がありません。食事記録時に金額を入力すると集計できます。');
+    } else {
+      let msg = `💴 経費集計（${summary.count}件）\n━━━━━━━\n`;
+      summary.records.slice(-10).forEach(r => {
+        const d = new Date(r.timestamp);
+        const dateStr = `${d.getMonth()+1}/${d.getDate()}`;
+        const label = r.note || r.text.slice(0, 20) || '（メモなし）';
+        msg += `${dateStr} ${label}: ¥${r.amount.toLocaleString()}\n`;
+      });
+      msg += `━━━━━━━\n合計: ¥${summary.total.toLocaleString()}`;
+      addMessage('assistant', msg);
+    }
+    return;
+  }
+
   // === データエクスポート ===
   if (/エクスポート|バックアップ|書き出し|データ保存/.test(lowerText)) {
     showExportMenu();
@@ -6597,6 +6909,7 @@ function analyzeAndRecord(text) {
         html += `<span style="color:#aaa;">${dateStr}</span>${mapLink}<br>`;
         html += `<span style="color:#e0e0e0;">${(r.text || '').slice(0,50)}</span>`;
         if (r.note) html += `<br><span style="color:#88ffcc;font-size:11px;">🍽 ${r.note.slice(0,40)}</span>`;
+        if (r.amount) html += `<span style="color:#ffcc88;font-size:11px;margin-left:8px;">💴 ¥${r.amount.toLocaleString()}</span>`;
         if (r.address) html += `<br><span style="color:#666;font-size:10px;">📌 ${r.address.slice(0,40)}</span>`;
         html += '</div>';
       });
@@ -7134,6 +7447,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // 飲み会モード: 未確認の候補をチェック
   checkPendingConfirmations();
+
+  // 音声読み上げボタンの初期状態
+  const _sb = document.getElementById('speechToggleBtn');
+  if (_sb && _speechEnabled) {
+    _sb.style.color = '#ff2200';
+    _sb.style.background = '#1a0000';
+  }
 
   // リマインダー: 起動時に期日チェック
   checkDueReminders();
