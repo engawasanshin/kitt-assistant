@@ -1258,6 +1258,21 @@ function getAppStateContext() {
     }
   } catch(e) { ctx += '今日の記録: 取得エラー\n'; }
 
+  // 直近の場所記録（最新3件）
+  try {
+    const _placeRecs = getPlaceRecords();
+    if (_placeRecs.length > 0) {
+      const _recent = _placeRecs.slice(-3).reverse();
+      ctx += '\n【直近の場所記録】\n';
+      _recent.forEach(r => {
+        const d = new Date(r.timestamp);
+        const dStr = `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+        const gpsStr = (r.lat && r.lng) ? ` GPS(${r.lat.toFixed(4)},${r.lng.toFixed(4)})` : ' GPS未取得';
+        ctx += `  ・${dStr}${gpsStr} ${(r.text||'').slice(0,40)}\n`;
+      });
+    }
+  } catch(e) {}
+
   // 今後のリマインダー
   try {
     const _upcoming = getReminders().filter(r => !r.done);
@@ -1475,7 +1490,7 @@ window.addEventListener('load', async () => {
     addSystemMessage('APIキーを設定してください（右上の歯車アイコン）');
   } else {
     if (chatHistory.length === 0) {
-      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-05g / travel-mode]');
+      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-05h / place-record]');
     } else {
       restoreHistory();
     }
@@ -1611,6 +1626,7 @@ async function sendMessage() {
     ((_lc.includes('テクニカル') && /分析して|見せて|お願い|チェックして/.test(_lc)) ||
      ((_lc.includes('移動平均') || _lc.includes('ボリンジャー')) && /見せて|表示して|分析して/.test(_lc)) ||
      ((_lc.includes('グラフ') || _lc.includes('チャート')) && /見せて|描いて|表示して/.test(_lc))) ||
+    /場所.*記録|食事.*記録|記録.*場所|ここを記録|場所.*履歴|食事.*履歴|場所.*見せて|place.*record/.test(_lc) ||
     /出張モード|旅行モード/.test(_lc) ||
     /リマインダー|リマインド/.test(_lc) ||
     _naturalAdd ||
@@ -1978,7 +1994,7 @@ async function saveSettings() {
 
   closeSettings();
   if (chatHistory.length === 0 && apiKey) {
-    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-05g / travel-mode]');
+    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-05h / place-record]');
   }
 }
 
@@ -3197,6 +3213,76 @@ function displayDailyLog() {
 }
 
 // ============================================================
+// 食事・場所記録システム
+// ============================================================
+
+function getPlaceRecords() {
+  return JSON.parse(localStorage.getItem('kitt_place_records') || '[]');
+}
+
+function savePlaceRecord(record) {
+  const records = getPlaceRecords();
+  records.push(record);
+  // 最大500件
+  if (records.length > 500) records.splice(0, records.length - 500);
+  localStorage.setItem('kitt_place_records', JSON.stringify(records));
+}
+
+// GPS取得→保存→チャットに結果表示（ボタンから呼ぶ）
+async function recordCurrentLocation(contextText) {
+  addSystemMessage('📍 GPS取得中...');
+  let location = null;
+  try {
+    location = await getCurrentLocation();
+  } catch(e) {}
+
+  const now = new Date();
+  const ts = now.toISOString();
+  const dateStr = `${now.getFullYear()}/${now.getMonth()+1}/${now.getDate()} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+
+  const record = {
+    id: Date.now().toString(),
+    timestamp: ts,
+    text: contextText || '',
+    lat: location ? location.lat : null,
+    lng: location ? location.lng : null,
+    address: location ? (location.address || '') : '',
+    note: ''
+  };
+  savePlaceRecord(record);
+
+  let msg = `📍 記録しました（${dateStr}）\n`;
+  msg += `📝 内容: ${contextText ? contextText.slice(0, 60) : '（なし）'}\n`;
+  if (location) {
+    const mapUrl = `https://maps.google.com/?q=${location.lat},${location.lng}`;
+    msg += `🌐 座標: ${location.lat.toFixed(5)}, ${location.lng.toFixed(5)}\n`;
+    if (location.address) msg += `📌 住所: ${location.address}\n`;
+    addSystemMessageWithHTML(`<span>${msg}</span><br><a href="${mapUrl}" target="_blank" style="color:#88aaff;font-size:11px;">🗺 Google Mapsで開く</a>`);
+  } else {
+    msg += '⚠️ GPS取得失敗（位置情報の許可を確認してください）\n時刻と内容のみ記録しました。';
+    addSystemMessage(msg);
+  }
+}
+
+// 食事・飲食キーワードを検出して場所記録を提案する
+function suggestPlaceRecord(text) {
+  const html = `
+<div style="font-size:12px;">
+  <span style="color:#88ffcc;">📍 場所を記録しますか？</span><br>
+  <span style="color:#aaa;font-size:11px;">${text.slice(0,40)}${text.length>40?'…':''}</span><br><br>
+  <button onclick="recordCurrentLocation(${JSON.stringify(text)});this.parentElement.parentElement.style.opacity='0.4';"
+    style="background:#1a3a2a;color:#88ffcc;border:1px solid #2a5a3a;border-radius:6px;padding:6px 16px;cursor:pointer;font-family:'Courier New',monospace;font-size:12px;">
+    📍 GPS取得して記録する
+  </button>
+  <button onclick="this.parentElement.parentElement.style.opacity='0.4';"
+    style="background:#1a1a2e;color:#888;border:1px solid #2a2a4a;border-radius:6px;padding:6px 16px;cursor:pointer;font-family:'Courier New',monospace;font-size:12px;margin-left:8px;">
+    スキップ
+  </button>
+</div>`;
+  addSystemMessageWithHTML(html);
+}
+
+// ============================================================
 // リマインダーシステム
 // ============================================================
 
@@ -3373,6 +3459,14 @@ function showCommandList() {
   <div style="color:#aaa;padding-left:8px;">
     「<span style="color:#fff;">1280円 コンビニ</span>」→ 手動入力<br>
     レシートOCR後「<span style="color:#fff;">このレシートを記録して</span>」
+  </div>
+
+  <div style="color:#88ffcc;margin-top:6px;margin-bottom:2px;">📍 食事・場所記録</div>
+  <div style="color:#aaa;padding-left:8px;">
+    「<span style="color:#fff;">ここで〇〇食べてる</span>」→ 場所記録を提案（GPS+内容）<br>
+    「<span style="color:#fff;">ここを記録して</span>」→ 即GPS取得して記録<br>
+    「<span style="color:#fff;">場所の記録を見せて</span>」→ 履歴一覧（Google Mapsリンク付き）<br>
+    ✈️ 「<span style="color:#fff;">出張モードON/OFF</span>」→ 飲み会GPS検出の停止/再開
   </div>
 
   <div style="color:#88ddcc;margin-top:6px;margin-bottom:2px;">📅 リマインダー</div>
@@ -6380,6 +6474,50 @@ function analyzeAndRecord(text) {
     }
     displayDailyLog();
     return;
+  }
+
+  // === 食事・場所記録システム ===
+
+  // 場所記録の一覧表示
+  if (/場所.*記録|食事.*記録|場所.*履歴|食事.*履歴|場所.*見せて/.test(lowerText) &&
+      /見せて|一覧|履歴|確認|表示/.test(lowerText)) {
+    const records = getPlaceRecords();
+    if (records.length === 0) {
+      addMessage('assistant', '📍 場所の記録はまだありません。食事中に「ここで〇〇食べてる」と話しかけると記録の提案をします。');
+    } else {
+      const recent = records.slice(-10).reverse();
+      let html = '<div style="font-size:12px;line-height:1.9;">';
+      html += `<div style="color:#88ffcc;font-weight:bold;margin-bottom:6px;">📍 場所記録（最新${recent.length}件）</div>`;
+      recent.forEach(r => {
+        const d = new Date(r.timestamp);
+        const dateStr = `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+        const hasGps = r.lat && r.lng;
+        const mapLink = hasGps ? ` <a href="https://maps.google.com/?q=${r.lat},${r.lng}" target="_blank" style="color:#88aaff;font-size:10px;">🗺 地図</a>` : '';
+        html += `<div style="border-bottom:1px solid #1a1a2a;padding:4px 0;">`;
+        html += `<span style="color:#aaa;">${dateStr}</span>${mapLink}<br>`;
+        html += `<span style="color:#e0e0e0;">${(r.text || '').slice(0,50)}</span>`;
+        if (r.address) html += `<br><span style="color:#666;font-size:10px;">📌 ${r.address.slice(0,40)}</span>`;
+        html += '</div>';
+      });
+      html += '</div>';
+      addSystemMessageWithHTML(html);
+    }
+    return;
+  }
+
+  // 「ここを記録して」明示コマンド
+  if (/ここを記録|ここで記録|場所を記録して|この場所を記録/.test(lowerText)) {
+    await (async () => {
+      await recordCurrentLocation(text);
+    })();
+    return;
+  }
+
+  // 食事・飲食キーワード自動検出 → 場所記録を提案
+  const _foodKeywords = /食事中|ご飯食べてる|ご飯食べ中|ランチ中|夕食中|朝食中|食べてます|食べています|飲んでます|飲んでいます|ここで.*食べ|ここで.*飲み|ここは.*レストラン|ここは.*カフェ|ここは.*料理/;
+  if (_foodKeywords.test(lowerText) && !lowerText.includes('記録')) {
+    suggestPlaceRecord(text);
+    // 提案だけして、会話はGeminiに流す（returnしない）
   }
 
   // === 出張・旅行モード ===
