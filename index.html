@@ -1490,7 +1490,7 @@ window.addEventListener('load', async () => {
     addSystemMessage('APIキーを設定してください（右上の歯車アイコン）');
   } else {
     if (chatHistory.length === 0) {
-      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-05h / place-record]');
+      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-05i / place-record-daily]');
     } else {
       restoreHistory();
     }
@@ -1994,7 +1994,7 @@ async function saveSettings() {
 
   closeSettings();
   if (chatHistory.length === 0 && apiKey) {
-    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-05h / place-record]');
+    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-05i / place-record-daily]');
   }
 }
 
@@ -6513,9 +6513,9 @@ function analyzeAndRecord(text) {
     return;
   }
 
-  // 食事・飲食キーワード自動検出 → 場所記録を提案
-  const _foodKeywords = /食事中|ご飯食べてる|ご飯食べ中|ランチ中|夕食中|朝食中|食べてます|食べています|飲んでます|飲んでいます|ここで.*食べ|ここで.*飲み|ここは.*レストラン|ここは.*カフェ|ここは.*料理/;
-  if (_foodKeywords.test(lowerText) && !lowerText.includes('記録')) {
+  // 食事・場所キーワード自動検出 → 場所記録を提案（日常・出張どちらでも）
+  const _foodKeywords = /食事中|ご飯食べてる|ご飯食べ中|ご飯食べてます|ランチ中|ランチしてる|ランチしてます|夕食中|夕飯食べてる|夕飯食べてます|朝食中|朝ごはん食べてる|食べてます|食べています|食べながら|飲みながら|ここで.*食べ|ここで.*飲み|ここは.*レストラン|ここは.*カフェ|ここは.*料理|ここは.*ラーメン|ここは.*寿司|ここは.*そば|ここは.*うどん|ここは.*焼肉|ここは.*居酒屋|今.*食べてる|今.*ランチ|今.*夕食|今.*夕飯|今.*朝食|に来てる|に来てます|に来ました.*食|カフェにいる|カフェにいます|レストランにいる|レストランにいます/;
+  if (_foodKeywords.test(lowerText) && !lowerText.includes('記録') && !lowerText.includes('飲み会')) {
     suggestPlaceRecord(text);
     // 提案だけして、会話はGeminiに流す（returnしない）
   }
