@@ -558,6 +558,10 @@ body {
     </div>
   </div>
 
+  <!-- 顔写真撮影用 hidden input -->
+  <input type="file" id="facePhotoInput" accept="image/*" capture="user"
+    style="display:none;" onchange="handleFacePhoto(this.files[0])">
+
   <!-- 日々の記録エリア -->
   <div id="dailyLogArea" style="margin-top: 12px; display: none;">
     <div style="font-size: 12px; color: #88aaff; margin-bottom: 6px; border-bottom: 1px solid #2a2a2a; padding-bottom: 4px;">
@@ -1252,8 +1256,10 @@ function getAppStateContext() {
     if (_todayLog) {
       ctx += `今日の記録（${new Date().toISOString().split('T')[0]}）:\n`;
       if (_todayLog.mood) ctx += `  気分: ${_todayLog.mood}（${_todayLog.moodScore > 0 ? '+' : ''}${_todayLog.moodScore}）\n`;
+      if (_todayLog.healthScore) ctx += `  体調スコア: ${_todayLog.healthScore}/10\n`;
       if (_todayLog.todos && _todayLog.todos.length > 0) ctx += `  TODO: ${_todayLog.todos.join('、')}\n`;
       if (_todayLog.note) ctx += `  メモ: ${_todayLog.note}\n`;
+      if (_todayLog.facePhotoDate) ctx += `  顔写真: 記録済み\n`;
     } else {
       ctx += `今日の記録（${new Date().toISOString().split('T')[0]}）: 未記録\n`;
     }
@@ -1510,7 +1516,7 @@ window.addEventListener('load', async () => {
     addSystemMessage('APIキーを設定してください（右上の歯車アイコン）');
   } else {
     if (chatHistory.length === 0) {
-      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-05k / weather-forex-weight-speech-expense]');
+      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-05l / daily-log-phase3]');
     } else {
       restoreHistory();
     }
@@ -1654,6 +1660,7 @@ async function sendMessage() {
     ((_lc.includes('テクニカル') && /分析して|見せて|お願い|チェックして/.test(_lc)) ||
      ((_lc.includes('移動平均') || _lc.includes('ボリンジャー')) && /見せて|表示して|分析して/.test(_lc)) ||
      ((_lc.includes('グラフ') || _lc.includes('チャート')) && /見せて|描いて|表示して/.test(_lc))) ||
+    /顔写真|顔を撮|selfie/.test(_lc) ||
     /体重グラフ|体重.*推移|体重.*見せて|体重.*記録/.test(_lc) ||
     /今日の天気|天気.*教えて|天気.*どう|天気は/.test(_lc) ||
     /為替|ドル円|元円|レート/.test(_lc) ||
@@ -2027,7 +2034,7 @@ async function saveSettings() {
 
   closeSettings();
   if (chatHistory.length === 0 && apiKey) {
-    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-05k / weather-forex-weight-speech-expense]');
+    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-05l / daily-log-phase3]');
   }
 }
 
@@ -3238,16 +3245,147 @@ function displayDailyLog() {
     const sign = (log.moodScore || 0) > 0 ? '+' : '';
     html += `<div>${emoji} 気分: <span style="color:#88aaff;font-weight:bold;">${log.mood}</span> (${sign}${log.moodScore || 0})</div>`;
   }
+  if (log.healthScore) {
+    const hColor = log.healthScore >= 8 ? '#88ffcc' : log.healthScore >= 5 ? '#ffcc88' : '#ff8866';
+    html += `<div style="margin-top:2px;">🏃 体調: <span style="color:${hColor};font-weight:bold;">${log.healthScore}/10</span></div>`;
+  }
   if (log.todos && log.todos.length > 0) {
     html += `<div style="margin-top:4px;">📌 TODO: ${log.todos.map(t => `<span style="color:#ffcc88;">${t}</span>`).join('、')}</div>`;
   }
   if (log.note) {
     html += `<div style="margin-top:4px;color:#999;font-size:11px;">📝 ${log.note.length > 40 ? log.note.substring(0, 40) + '...' : log.note}</div>`;
   }
+  if (log.facePhotoDate) {
+    html += `<div style="margin-top:4px;font-size:10px;color:#555;">📸 顔写真あり</div>`;
+  }
   if (!html) { area.style.display = 'none'; return; }
 
   content.innerHTML = html;
   area.style.display = 'block';
+}
+
+// ============================================================
+// 日々の記録 Phase 3: 体調スコア + 顔写真
+// ============================================================
+
+// 体調スコア自動検出（1〜10点）
+function parseHealthScore(text) {
+  const m = text.match(/(?:体調|調子|健康|コンディション)[はが]?\s*(\d+)\s*点|(\d+)\s*点.*?(?:体調|調子)|(?:体調|調子)[はが]?\s*(\d+)\/10/);
+  if (!m) return null;
+  const score = parseInt(m[1] || m[2] || m[3]);
+  return (score >= 1 && score <= 10) ? score : null;
+}
+
+// 顔写真 localStorage
+function getFacePhotos() {
+  return JSON.parse(localStorage.getItem('kitt_face_photos') || '{}');
+}
+function saveFacePhoto(dateKey, dataUrl) {
+  const photos = getFacePhotos();
+  photos[dateKey] = { dataUrl, timestamp: new Date().toISOString() };
+  const keys = Object.keys(photos).sort();
+  if (keys.length > 90) keys.slice(0, keys.length - 90).forEach(k => delete photos[k]);
+  localStorage.setItem('kitt_face_photos', JSON.stringify(photos));
+}
+
+// 画像リサイズ（canvas経由・容量削減）
+function resizeImageToBase64(file, maxSize, quality) {
+  return new Promise(resolve => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      const img = new Image();
+      img.onload = () => {
+        const ratio = Math.min(maxSize / img.width, maxSize / img.height, 1);
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(img.width * ratio);
+        canvas.height = Math.round(img.height * ratio);
+        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+// カメラを開く
+function openCamera() {
+  const input = document.getElementById('facePhotoInput');
+  if (input) input.click();
+}
+
+// 顔写真撮影後の処理
+async function handleFacePhoto(file) {
+  if (!file) return;
+  addSystemMessage('📸 写真を処理中...');
+  const dataUrl = await resizeImageToBase64(file, 320, 0.55);
+  const today = new Date().toISOString().split('T')[0];
+  saveFacePhoto(today, dataUrl);
+  saveTodayLog({ facePhotoDate: today });
+
+  const html = `
+<div style="font-size:12px;">
+  <div style="color:#88aaff;margin-bottom:6px;">📸 顔写真を記録しました（${today}）</div>
+  <img src="${dataUrl}" style="width:120px;border-radius:8px;border:1px solid #333;display:block;margin-bottom:8px;">
+  <button onclick="analyzeFace('${today}');this.textContent='分析中...';"
+    style="background:#1a1a3a;color:#88aaff;border:1px solid #2a2a6a;border-radius:4px;padding:5px 14px;cursor:pointer;font-size:11px;font-family:'Courier New',monospace;">
+    🔍 AIで顔色診断する
+  </button>
+</div>`;
+  addSystemMessageWithHTML(html);
+  displayDailyLog();
+}
+
+// AI顔色診断（Gemini Vision）
+async function analyzeFace(dateKey) {
+  if (!apiKey) { addSystemMessage('⚠️ Gemini APIキーが未設定です。'); return; }
+  const photo = getFacePhotos()[dateKey];
+  if (!photo) { addSystemMessage('⚠️ 写真が見つかりません。'); return; }
+  addSystemMessage('🔍 顔色を分析中...');
+  const base64 = photo.dataUrl.split(',')[1];
+  try {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [
+            { text: 'この写真の人物の顔色・体調感を分析してください。血色・肌のツヤ・目の状態・表情から読み取れる体調感を3〜4行で。カジュアルな口調で、あくまで参考情報として話しかけてください。医療診断ではありません。' },
+            { inline_data: { mime_type: 'image/jpeg', data: base64 } }
+          ]}],
+          generationConfig: { maxOutputTokens: 300 }
+        })
+      }
+    );
+    const json = await res.json();
+    const result = json.candidates?.[0]?.content?.parts?.[0]?.text || '分析できませんでした。';
+    addMessage('assistant', `📸 顔色診断（${dateKey}）\n\n${result}`);
+  } catch(e) {
+    addSystemMessage(`⚠️ 顔色診断エラー: ${e.message}`);
+  }
+}
+
+// 顔写真グリッド表示
+function showFacePhotoGrid() {
+  const photos = getFacePhotos();
+  const keys = Object.keys(photos).sort().reverse().slice(0, 12);
+  if (keys.length === 0) {
+    addMessage('assistant', '📸 顔写真がまだありません。「顔写真を撮る」と話しかけてください。');
+    return;
+  }
+  let html = '<div style="font-size:12px;"><div style="color:#88aaff;font-weight:bold;margin-bottom:8px;">📸 顔写真一覧（最新12枚）</div>';
+  html += '<div style="display:flex;flex-wrap:wrap;gap:6px;">';
+  keys.forEach(k => {
+    const d = new Date(k);
+    const label = `${d.getMonth()+1}/${d.getDate()}`;
+    html += `<div style="text-align:center;" onclick="analyzeFace('${k}')">
+      <img src="${photos[k].dataUrl}" style="width:72px;height:72px;object-fit:cover;border-radius:6px;border:1px solid #333;display:block;cursor:pointer;">
+      <span style="font-size:9px;color:#666;">${label}</span>
+    </div>`;
+  });
+  html += '</div><div style="color:#555;font-size:10px;margin-top:6px;">📌 写真タップ → AIで顔色診断</div></div>';
+  addSystemMessageWithHTML(html);
 }
 
 // ============================================================
@@ -3544,6 +3682,7 @@ function exportAllDataJSON() {
     reminders: getReminders(),
     dailyLogs: JSON.parse(localStorage.getItem('kitt_daily_log') || '{}'),
     weightLog: getWeightLog(),
+    facePhotos: getFacePhotos(),
     watchlist: JSON.parse(localStorage.getItem('kitt_investment_watchlist') || '[]'),
   };
   downloadFile(`kitt_backup_${today}.json`, JSON.stringify(data, null, 2), 'application/json');
@@ -3784,6 +3923,14 @@ function showCommandList() {
   <div style="color:#aaa;padding-left:8px;">
     「<span style="color:#fff;">1280円 コンビニ</span>」→ 手動入力<br>
     レシートOCR後「<span style="color:#fff;">このレシートを記録して</span>」
+  </div>
+
+  <div style="color:#ffaacc;margin-top:6px;margin-bottom:2px;">📸 顔写真・体調記録</div>
+  <div style="color:#aaa;padding-left:8px;">
+    「<span style="color:#fff;">顔写真を撮る</span>」→ カメラ起動→撮影→保存<br>
+    「<span style="color:#fff;">顔写真を見せて</span>」→ 最近12枚のグリッド表示<br>
+    写真タップ → 🔍 AIで顔色診断<br>
+    「<span style="color:#fff;">体調は8点</span>」「<span style="color:#fff;">調子は7/10</span>」→ 体調スコアを記録
   </div>
 
   <div style="color:#aaddff;margin-top:6px;margin-bottom:2px;">🌤 天気・為替・体重</div>
@@ -6792,7 +6939,7 @@ function analyzeAndRecord(text) {
   // 振り返りコマンド（記録を表示）
   if (lowerText.includes('振り返り') || lowerText.includes('今日の記録')) {
     const log = getTodayLog();
-    if (!log || (!log.mood && !log.todos && !log.note)) {
+    if (!log || (!log.mood && !log.todos && !log.note && !log.healthScore)) {
       addMessage('assistant', '📔 今日の記録はまだありません。気分（例：「今日は楽しかった」）やTODO（例：「今日の目標は資料作成」）を教えてください。');
     } else {
       let msg = '📔 今日の記録です:\n';
@@ -6800,6 +6947,11 @@ function analyzeAndRecord(text) {
         const emoji = getMoodEmoji(log.moodScore || 0);
         msg += `${emoji} 気分: ${log.mood} (${log.moodScore > 0 ? '+' : ''}${log.moodScore || 0})\n`;
       }
+      if (log.healthScore) {
+        const hEmoji = log.healthScore >= 8 ? '💪' : log.healthScore >= 5 ? '🙂' : '😔';
+        msg += `${hEmoji} 体調: ${log.healthScore}/10\n`;
+      }
+      if (log.facePhotoDate) msg += `📸 顔写真: あり\n`;
       if (log.todos && log.todos.length > 0) {
         msg += `📌 TODO: ${log.todos.join('、')}\n`;
       }
@@ -6808,6 +6960,35 @@ function analyzeAndRecord(text) {
       }
       addMessage('assistant', msg.trim());
     }
+    displayDailyLog();
+    return;
+  }
+
+  // === 日々の記録 Phase 3: 体調スコア・顔写真 ===
+
+  // 顔写真
+  if (/顔写真|顔を撮|selfie/.test(lowerText)) {
+    if (/見せて|一覧|グリッド|履歴/.test(lowerText)) {
+      showFacePhotoGrid();
+    } else {
+      addSystemMessageWithHTML(`
+<div style="font-size:12px;">
+  <div style="color:#88aaff;margin-bottom:8px;">📸 顔写真を撮影します</div>
+  <button onclick="openCamera()"
+    style="background:#1a1a3a;color:#88aaff;border:1px solid #2a2a6a;border-radius:6px;padding:8px 20px;cursor:pointer;font-family:'Courier New',monospace;font-size:13px;display:block;width:100%;">
+    📷 カメラを開く
+  </button>
+</div>`);
+    }
+    return;
+  }
+
+  // 体調スコア自動検出
+  const _healthScore = parseHealthScore(text);
+  if (_healthScore !== null) {
+    saveTodayLog({ healthScore: _healthScore });
+    const hEmoji = _healthScore >= 8 ? '💪' : _healthScore >= 5 ? '🙂' : '😔';
+    addMessage('assistant', `${hEmoji} 体調スコア ${_healthScore}/10 を記録しました。\n${_healthScore >= 8 ? '絶好調ですね！' : _healthScore >= 5 ? '普通くらいですね。' : 'あまり良くない日ですね。無理しないでください。'}`);
     displayDailyLog();
     return;
   }
