@@ -1490,7 +1490,7 @@ window.addEventListener('load', async () => {
     addSystemMessage('APIキーを設定してください（右上の歯車アイコン）');
   } else {
     if (chatHistory.length === 0) {
-      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-05i / place-record-daily]');
+      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-05j / export-place-memo]');
     } else {
       restoreHistory();
     }
@@ -1626,6 +1626,7 @@ async function sendMessage() {
     ((_lc.includes('テクニカル') && /分析して|見せて|お願い|チェックして/.test(_lc)) ||
      ((_lc.includes('移動平均') || _lc.includes('ボリンジャー')) && /見せて|表示して|分析して/.test(_lc)) ||
      ((_lc.includes('グラフ') || _lc.includes('チャート')) && /見せて|描いて|表示して/.test(_lc))) ||
+    /エクスポート|バックアップ|書き出し|データ保存/.test(_lc) ||
     /場所.*記録|食事.*記録|記録.*場所|ここを記録|場所.*履歴|食事.*履歴|場所.*見せて|place.*record/.test(_lc) ||
     /出張モード|旅行モード/.test(_lc) ||
     /リマインダー|リマインド/.test(_lc) ||
@@ -1994,7 +1995,7 @@ async function saveSettings() {
 
   closeSettings();
   if (chatHistory.length === 0 && apiKey) {
-    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-05i / place-record-daily]');
+    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-05j / export-place-memo]');
   }
 }
 
@@ -3228,7 +3229,17 @@ function savePlaceRecord(record) {
   localStorage.setItem('kitt_place_records', JSON.stringify(records));
 }
 
-// GPS取得→保存→チャットに結果表示（ボタンから呼ぶ）
+// 場所記録のメモを更新
+function addPlaceNote(id, note) {
+  const records = getPlaceRecords();
+  const idx = records.findIndex(r => r.id === id);
+  if (idx !== -1) {
+    records[idx].note = note;
+    localStorage.setItem('kitt_place_records', JSON.stringify(records));
+  }
+}
+
+// GPS取得→保存→メモ入力フォームまで表示（ボタンから呼ぶ）
 async function recordCurrentLocation(contextText) {
   addSystemMessage('📍 GPS取得中...');
   let location = null;
@@ -3239,9 +3250,10 @@ async function recordCurrentLocation(contextText) {
   const now = new Date();
   const ts = now.toISOString();
   const dateStr = `${now.getFullYear()}/${now.getMonth()+1}/${now.getDate()} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+  const recordId = Date.now().toString();
 
   const record = {
-    id: Date.now().toString(),
+    id: recordId,
     timestamp: ts,
     text: contextText || '',
     lat: location ? location.lat : null,
@@ -3251,17 +3263,98 @@ async function recordCurrentLocation(contextText) {
   };
   savePlaceRecord(record);
 
-  let msg = `📍 記録しました（${dateStr}）\n`;
-  msg += `📝 内容: ${contextText ? contextText.slice(0, 60) : '（なし）'}\n`;
+  let infoHtml = `<span style="color:#88ffcc;">📍 記録しました（${dateStr}）</span><br>`;
+  infoHtml += `<span style="color:#aaa;font-size:11px;">${(contextText||'').slice(0,60)}</span><br>`;
   if (location) {
     const mapUrl = `https://maps.google.com/?q=${location.lat},${location.lng}`;
-    msg += `🌐 座標: ${location.lat.toFixed(5)}, ${location.lng.toFixed(5)}\n`;
-    if (location.address) msg += `📌 住所: ${location.address}\n`;
-    addSystemMessageWithHTML(`<span>${msg}</span><br><a href="${mapUrl}" target="_blank" style="color:#88aaff;font-size:11px;">🗺 Google Mapsで開く</a>`);
+    infoHtml += `<span style="color:#888;font-size:11px;">🌐 ${location.lat.toFixed(5)}, ${location.lng.toFixed(5)}</span>`;
+    if (location.address) infoHtml += `<br><span style="color:#666;font-size:10px;">📌 ${location.address.slice(0,50)}</span>`;
+    infoHtml += `<br><a href="${mapUrl}" target="_blank" style="color:#88aaff;font-size:11px;">🗺 Google Mapsで開く</a>`;
   } else {
-    msg += '⚠️ GPS取得失敗（位置情報の許可を確認してください）\n時刻と内容のみ記録しました。';
-    addSystemMessage(msg);
+    infoHtml += `<span style="color:#ff8866;font-size:11px;">⚠️ GPS取得失敗（時刻・内容のみ記録）</span>`;
   }
+
+  // メモ入力フォーム
+  const memoId = `placeNote_${recordId}`;
+  infoHtml += `
+<div style="margin-top:8px;">
+  <input id="${memoId}" type="text" placeholder="🍽 何を食べた？店名など（省略可）"
+    style="width:100%;background:#111;color:#e0e0e0;border:1px solid #2a3a2a;border-radius:4px;padding:5px 8px;font-size:12px;font-family:'Courier New',monospace;box-sizing:border-box;">
+  <button onclick="
+    const v=document.getElementById('${memoId}').value.trim();
+    if(v){addPlaceNote('${recordId}',v);this.previousElementSibling.disabled=true;this.textContent='✅ 保存済み';this.disabled=true;}
+  " style="margin-top:4px;background:#1a3a2a;color:#88ffcc;border:1px solid #2a5a3a;border-radius:4px;padding:4px 12px;cursor:pointer;font-size:11px;font-family:'Courier New',monospace;">
+    メモ保存
+  </button>
+</div>`;
+
+  addSystemMessageWithHTML(infoHtml);
+}
+
+// ============================================================
+// データエクスポート（バックアップ）
+// ============================================================
+
+function downloadFile(filename, content, mimeType) {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function exportAllDataJSON() {
+  const today = new Date().toISOString().split('T')[0];
+  const data = {
+    exportedAt: new Date().toISOString(),
+    placeRecords: getPlaceRecords(),
+    reminders: getReminders(),
+    dailyLogs: JSON.parse(localStorage.getItem('kitt_daily_log') || '{}'),
+    watchlist: JSON.parse(localStorage.getItem('kitt_investment_watchlist') || '[]'),
+  };
+  downloadFile(`kitt_backup_${today}.json`, JSON.stringify(data, null, 2), 'application/json');
+  return data;
+}
+
+function exportPlaceRecordsCSV() {
+  const records = getPlaceRecords();
+  if (records.length === 0) return false;
+  const header = '日時,内容,メモ,緯度,経度,住所';
+  const rows = records.map(r => {
+    const d = new Date(r.timestamp);
+    const dateStr = `${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+    const escape = s => `"${(s||'').replace(/"/g,'""')}"`;
+    return [dateStr, escape(r.text), escape(r.note), r.lat||'', r.lng||'', escape(r.address)].join(',');
+  });
+  const today = new Date().toISOString().split('T')[0];
+  downloadFile(`kitt_places_${today}.csv`, '\uFEFF' + header + '\n' + rows.join('\n'), 'text/csv');
+  return true;
+}
+
+function showExportMenu() {
+  const placeCount = getPlaceRecords().length;
+  const reminderCount = getReminders().length;
+  const logCount = Object.keys(JSON.parse(localStorage.getItem('kitt_daily_log') || '{}')).length;
+  const html = `
+<div style="font-size:12px;line-height:1.9;">
+  <div style="color:#88aaff;font-weight:bold;margin-bottom:8px;border-bottom:1px solid #2a2a4a;padding-bottom:4px;">💾 データエクスポート（バックアップ）</div>
+  <div style="color:#aaa;margin-bottom:8px;font-size:11px;">機種変更・ブラウザリセット前に保存しておくと安心です。</div>
+
+  <button onclick="exportAllDataJSON();this.textContent='✅ ダウンロード開始';"
+    style="display:block;width:100%;background:#1a1a3a;color:#88aaff;border:1px solid #2a2a5a;border-radius:6px;padding:8px;cursor:pointer;font-family:'Courier New',monospace;font-size:12px;margin-bottom:6px;text-align:left;">
+    📦 全データまとめて保存（JSON）<br>
+    <span style="color:#666;font-size:10px;">場所記録${placeCount}件 / リマインダー${reminderCount}件 / 日々の記録${logCount}日分 / ウォッチリスト</span>
+  </button>
+
+  <button onclick="const ok=exportPlaceRecordsCSV();this.textContent=ok?'✅ ダウンロード開始':'⚠️ 記録なし';"
+    style="display:block;width:100%;background:#1a2a1a;color:#88ffcc;border:1px solid #2a4a2a;border-radius:6px;padding:8px;cursor:pointer;font-family:'Courier New',monospace;font-size:12px;text-align:left;">
+    📍 食事・場所記録をCSVで保存<br>
+    <span style="color:#666;font-size:10px;">${placeCount}件 / Excelで開けます</span>
+  </button>
+</div>`;
+  addSystemMessageWithHTML(html);
 }
 
 // 食事・飲食キーワードを検出して場所記録を提案する
@@ -3482,6 +3575,7 @@ function showCommandList() {
   <div style="color:#aaa;padding-left:8px;">
     「<span style="color:#fff;">自己チェック</span>」→ アプリ状態・API使用量確認<br>
     「<span style="color:#fff;">キャッシュリセット</span>」→ 価格キャッシュ削除<br>
+    「<span style="color:#fff;">エクスポート</span>」「<span style="color:#fff;">バックアップ</span>」→ 全データをJSONで保存<br>
     「<span style="color:#fff;">ヘルプ</span>」「<span style="color:#fff;">コマンド一覧</span>」→ この一覧を表示
   </div>
 
@@ -6476,6 +6570,12 @@ function analyzeAndRecord(text) {
     return;
   }
 
+  // === データエクスポート ===
+  if (/エクスポート|バックアップ|書き出し|データ保存/.test(lowerText)) {
+    showExportMenu();
+    return;
+  }
+
   // === 食事・場所記録システム ===
 
   // 場所記録の一覧表示
@@ -6496,6 +6596,7 @@ function analyzeAndRecord(text) {
         html += `<div style="border-bottom:1px solid #1a1a2a;padding:4px 0;">`;
         html += `<span style="color:#aaa;">${dateStr}</span>${mapLink}<br>`;
         html += `<span style="color:#e0e0e0;">${(r.text || '').slice(0,50)}</span>`;
+        if (r.note) html += `<br><span style="color:#88ffcc;font-size:11px;">🍽 ${r.note.slice(0,40)}</span>`;
         if (r.address) html += `<br><span style="color:#666;font-size:10px;">📌 ${r.address.slice(0,40)}</span>`;
         html += '</div>';
       });
