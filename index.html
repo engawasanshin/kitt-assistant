@@ -1475,7 +1475,7 @@ window.addEventListener('load', async () => {
     addSystemMessage('APIキーを設定してください（右上の歯車アイコン）');
   } else {
     if (chatHistory.length === 0) {
-      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-05f / reminder-nlp-expand]');
+      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-05g / travel-mode]');
     } else {
       restoreHistory();
     }
@@ -1611,6 +1611,7 @@ async function sendMessage() {
     ((_lc.includes('テクニカル') && /分析して|見せて|お願い|チェックして/.test(_lc)) ||
      ((_lc.includes('移動平均') || _lc.includes('ボリンジャー')) && /見せて|表示して|分析して/.test(_lc)) ||
      ((_lc.includes('グラフ') || _lc.includes('チャート')) && /見せて|描いて|表示して/.test(_lc))) ||
+    /出張モード|旅行モード/.test(_lc) ||
     /リマインダー|リマインド/.test(_lc) ||
     _naturalAdd ||
     _isNewsQuery
@@ -1977,7 +1978,7 @@ async function saveSettings() {
 
   closeSettings();
   if (chatHistory.length === 0 && apiKey) {
-    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-05f / reminder-nlp-expand]');
+    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-05g / travel-mode]');
   }
 }
 
@@ -6381,6 +6382,31 @@ function analyzeAndRecord(text) {
     return;
   }
 
+  // === 出張・旅行モード ===
+
+  if (/出張モード|旅行モード/.test(lowerText)) {
+    if (/off|オフ|解除|終了|戻る|帰国/.test(lowerText)) {
+      localStorage.removeItem('kitt_travel_mode');
+      localStorage.removeItem('kitt_travel_mode_end');
+      addMessage('assistant', '✅ 出張モードを解除しました。飲み会自動検出・位置記録を再開します。');
+    } else {
+      // ON または確認
+      if (/on|オン|開始|設定|中国|海外/.test(lowerText) || /出張モードon|出張モードオン/.test(lowerText)) {
+        // 終了日の読み取り（「4月30日まで」「3週間」など）
+        const endDate = parseReminderDate(text);
+        localStorage.setItem('kitt_travel_mode', '1');
+        if (endDate) localStorage.setItem('kitt_travel_mode_end', endDate);
+        addMessage('assistant', `✈️ 出張モードをONにしました。\n飲み会自動検出・位置記録を停止します。${endDate ? '\n終了予定: ' + endDate : ''}\n\n帰国後は「出張モードOFF」と話しかけてください。`);
+      } else {
+        // 状態確認
+        const isOn = localStorage.getItem('kitt_travel_mode') === '1';
+        const endStr = localStorage.getItem('kitt_travel_mode_end') || '未設定';
+        addMessage('assistant', `✈️ 出張モード: ${isOn ? 'ON（飲み会検出停止中）' : 'OFF（通常動作中）'}\n${isOn ? '終了予定: ' + endStr : 'ONにするには「出張モードON」と話しかけてください。'}`);
+      }
+    }
+    return;
+  }
+
   // === リマインダーシステム ===
 
   // リマインダー追加
@@ -6873,8 +6899,9 @@ document.addEventListener('DOMContentLoaded', () => {
   // リマインダー: 起動時に期日チェック
   checkDueReminders();
 
-  // 飲み会モード: 30分ごとに位置情報を記録（バックグラウンド）
+  // 飲み会モード: 30分ごとに位置情報を記録（出張モード中はスキップ）
   setInterval(async () => {
+    if (localStorage.getItem('kitt_travel_mode') === '1') return;
     const location = await getCurrentLocation();
     if (location) {
       addActivityHistory(location, 'auto');
@@ -6886,6 +6913,12 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
   }, 30 * 60 * 1000); // 30分
+
+  // 出張モード中の場合、起動時に通知
+  if (localStorage.getItem('kitt_travel_mode') === '1') {
+    const travelEnd = localStorage.getItem('kitt_travel_mode_end') || '';
+    addSystemMessage(`✈️ 出張モード中（飲み会自動検出・位置記録 停止中）${travelEnd ? ' / 終了予定: ' + travelEnd : ''}\n解除するには「出張モードOFF」と話しかけてください。`);
+  }
 });
 
 // メッセージ送信時の更新は、sendMessage関数内で直接呼び出すように変更
