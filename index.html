@@ -1258,6 +1258,31 @@ function getAppStateContext() {
     }
   } catch(e) { ctx += '今日の記録: 取得エラー\n'; }
 
+  // 今後のリマインダー
+  try {
+    const _upcoming = getReminders().filter(r => !r.done);
+    if (_upcoming.length > 0) {
+      const _todayStr = new Date().toISOString().split('T')[0];
+      const _near = _upcoming.filter(r => {
+        const diff = Math.ceil((new Date(r.dueDate) - new Date(_todayStr)) / 86400000);
+        return diff <= 7;
+      }).slice(0, 5);
+      if (_near.length > 0) {
+        ctx += '\n【今後7日以内のリマインダー】\n';
+        _near.forEach(r => {
+          const d = new Date(r.dueDate);
+          const diff = Math.ceil((new Date(r.dueDate) - new Date(_todayStr)) / 86400000);
+          const urgency = diff <= 0 ? '⚠️ 今日' : diff === 1 ? '明日' : `${diff}日後`;
+          ctx += `  ・${r.title}（${d.getMonth()+1}月${d.getDate()}日 / ${urgency}）\n`;
+        });
+      } else {
+        ctx += `\n【リマインダー】登録${_upcoming.length}件（7日以内の予定なし）\n`;
+      }
+    } else {
+      ctx += '\n【リマインダー】登録なし\n';
+    }
+  } catch(e) { ctx += '\n【リマインダー】取得エラー\n'; }
+
   // 重要な制約
   ctx += '\n【データ参照ルール（アーキテクチャ原則）】\n';
   ctx += '- KITTはマスターインターフェース。サブウインドウはKITTに従属する視覚補助。\n';
@@ -1450,7 +1475,7 @@ window.addEventListener('load', async () => {
     addSystemMessage('APIキーを設定してください（右上の歯車アイコン）');
   } else {
     if (chatHistory.length === 0) {
-      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-05e / fix-fake-price-kakeibo]');
+      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-05f / reminder-nlp-expand]');
     } else {
       restoreHistory();
     }
@@ -1576,6 +1601,9 @@ async function sendMessage() {
      /追加|登録|入れて|加えて|削除|外して|消して|抜いて|確認|状態|見せて|表示/.test(_lc)) ||
     /キャッシュリセット|キャッシュ削除/.test(_lc) ||
     /自己チェック|状態診断|ブリーフィング|振り返り|今日の記録/.test(_lc) ||
+    (/株|投資/.test(_lc) && /最近の状況|どうなってる|どんな感じ|教えて|報告/.test(_lc)) ||
+    (/気分|気持ち|体調|調子/.test(_lc) && /推移|グラフ|最近|どんな感じ|見せて/.test(_lc)) ||
+    (/今日|今週|先週|先月/.test(_lc) && /何があった|何してた|記録|まとめ|振り返|サマリ/.test(_lc)) ||
     /^ヘルプ$|コマンド一覧|使い方|何ができる|できること/.test(_lc) ||
     /気分グラフ|気分の推移|気分チャート|気分を見せて/.test(_lc) ||
     (/先週|今週の記録|今週何した|先週何してた|週次サマリー|週のまとめ/.test(_lc) && /記録|何した|振り返り|まとめ|サマリー/.test(_lc)) ||
@@ -1583,6 +1611,7 @@ async function sendMessage() {
     ((_lc.includes('テクニカル') && /分析して|見せて|お願い|チェックして/.test(_lc)) ||
      ((_lc.includes('移動平均') || _lc.includes('ボリンジャー')) && /見せて|表示して|分析して/.test(_lc)) ||
      ((_lc.includes('グラフ') || _lc.includes('チャート')) && /見せて|描いて|表示して/.test(_lc))) ||
+    /リマインダー|リマインド/.test(_lc) ||
     _naturalAdd ||
     _isNewsQuery
     // ※_isStockQueryはGeminiに流す（会話できるよう）。ウォッチリストはanalyzeAndRecordで自動表示
@@ -1948,7 +1977,7 @@ async function saveSettings() {
 
   closeSettings();
   if (chatHistory.length === 0 && apiKey) {
-    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-05e / fix-fake-price-kakeibo]');
+    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-05f / reminder-nlp-expand]');
   }
 }
 
@@ -3166,6 +3195,153 @@ function displayDailyLog() {
   area.style.display = 'block';
 }
 
+// ============================================================
+// リマインダーシステム
+// ============================================================
+
+function getReminders() {
+  return JSON.parse(localStorage.getItem('kitt_reminders') || '[]');
+}
+function saveReminders(list) {
+  localStorage.setItem('kitt_reminders', JSON.stringify(list));
+}
+
+function addReminder(title, dueDate, alertDaysBefore) {
+  const list = getReminders();
+  list.push({
+    id: Date.now().toString(),
+    title,
+    dueDate,
+    alertDaysBefore: alertDaysBefore || 1,
+    done: false,
+    createdAt: new Date().toISOString().split('T')[0],
+    lastNotifiedDate: null
+  });
+  saveReminders(list);
+  return list;
+}
+
+function deleteReminder(id) {
+  const list = getReminders().filter(r => r.id !== id);
+  saveReminders(list);
+}
+
+function doneReminder(id) {
+  const list = getReminders().map(r => r.id === id ? { ...r, done: true } : r);
+  saveReminders(list);
+}
+
+// 自然言語から日付を解析
+function parseReminderDate(text) {
+  const now = new Date();
+  const year = now.getFullYear();
+
+  // "〇月〇日"
+  const mD = text.match(/(\d{1,2})月(\d{1,2})日/);
+  if (mD) {
+    let d = new Date(year, parseInt(mD[1]) - 1, parseInt(mD[2]));
+    if (d < now) d.setFullYear(year + 1);
+    return d.toISOString().split('T')[0];
+  }
+  // "〇日後"
+  const dAfter = text.match(/(\d+)日後/);
+  if (dAfter) {
+    const d = new Date(now); d.setDate(d.getDate() + parseInt(dAfter[1]));
+    return d.toISOString().split('T')[0];
+  }
+  // "〇週間後"
+  const wAfter = text.match(/(\d+)週間?後/);
+  if (wAfter) {
+    const d = new Date(now); d.setDate(d.getDate() + parseInt(wAfter[1]) * 7);
+    return d.toISOString().split('T')[0];
+  }
+  // "〇ヶ月後"
+  const moAfter = text.match(/(\d+)ヶ?月後/);
+  if (moAfter) {
+    const d = new Date(now); d.setMonth(d.getMonth() + parseInt(moAfter[1]));
+    return d.toISOString().split('T')[0];
+  }
+  if (/明日|あした/.test(text)) {
+    const d = new Date(now); d.setDate(d.getDate() + 1);
+    return d.toISOString().split('T')[0];
+  }
+  if (/今週末|週末/.test(text)) {
+    const d = new Date(now);
+    d.setDate(d.getDate() + (6 - d.getDay() || 7));
+    return d.toISOString().split('T')[0];
+  }
+  if (/来週末/.test(text)) {
+    const d = new Date(now);
+    d.setDate(d.getDate() + (6 - d.getDay()) + 7);
+    return d.toISOString().split('T')[0];
+  }
+  if (/来週/.test(text)) {
+    const d = new Date(now); d.setDate(d.getDate() + 7);
+    return d.toISOString().split('T')[0];
+  }
+  if (/来月/.test(text)) {
+    const d = new Date(year, now.getMonth() + 1, 1);
+    return d.toISOString().split('T')[0];
+  }
+  return null;
+}
+
+// 自然言語からリマインダーのタイトルを解析
+function parseReminderTitle(text) {
+  // "〇〇をリマインドして/覚えておいて/忘れないようにして/通知して"
+  let m = text.match(/(.{2,25})を(?:リマインドして|覚えておいて|通知して|忘れないようにして|アラートして)/);
+  if (m) return m[1].trim();
+  // "〇〇を〇月〇日に教えて"
+  m = text.match(/(.{2,20})を\d{1,2}月/);
+  if (m) return m[1].trim();
+  // "〇月〇日に〇〇"
+  m = text.match(/\d{1,2}月\d{1,2}日(?:に|は)(.{2,20})/);
+  if (m) return m[1].replace(/を(?:リマインド|教えて|通知).*/, '').trim();
+  // "〇〇の予定/通院/締め切りを"
+  m = text.match(/(.{2,20})(?:の予定|の通院|の締め切り|の期限|の納期)/);
+  if (m) return m[1].trim() + (text.includes('通院') ? '通院' : text.includes('締め切り') ? '締め切り' : '');
+  return null;
+}
+
+// アラート表示すべき日数前チェック
+function getRemindersDue() {
+  const today = new Date().toISOString().split('T')[0];
+  return getReminders().filter(r => {
+    if (r.done) return false;
+    const due = new Date(r.dueDate);
+    const todayD = new Date(today);
+    const daysLeft = Math.ceil((due - todayD) / (1000 * 60 * 60 * 24));
+    return daysLeft >= 0 && daysLeft <= (r.alertDaysBefore || 1);
+  });
+}
+
+// 起動時・定期チェック
+function checkDueReminders() {
+  const due = getRemindersDue();
+  if (due.length === 0) return;
+  const today = new Date().toISOString().split('T')[0];
+  const unseen = due.filter(r => r.lastNotifiedDate !== today);
+  if (unseen.length === 0) return;
+
+  // 通知済みにマーク
+  const list = getReminders().map(r => {
+    if (unseen.find(u => u.id === r.id)) return { ...r, lastNotifiedDate: today };
+    return r;
+  });
+  saveReminders(list);
+
+  const msgs = unseen.map(r => {
+    const due = new Date(r.dueDate);
+    const todayD = new Date(today);
+    const daysLeft = Math.ceil((due - todayD) / (1000 * 60 * 60 * 24));
+    const when = daysLeft === 0 ? '今日！' : daysLeft === 1 ? '明日' : `あと${daysLeft}日`;
+    return `⏰ ${r.title}（${r.dueDate} / ${when}）`;
+  });
+  setTimeout(() => {
+    addMessage('assistant', `🔔 リマインダーのお知らせです、塩川さん。\n${msgs.join('\n')}\n\n完了した場合は「〇〇完了」と教えてください。`);
+  }, 3000);
+}
+
 // コマンド一覧を表示
 function showCommandList() {
   const html = `
@@ -3196,6 +3372,15 @@ function showCommandList() {
   <div style="color:#aaa;padding-left:8px;">
     「<span style="color:#fff;">1280円 コンビニ</span>」→ 手動入力<br>
     レシートOCR後「<span style="color:#fff;">このレシートを記録して</span>」
+  </div>
+
+  <div style="color:#88ddcc;margin-top:6px;margin-bottom:2px;">📅 リマインダー</div>
+  <div style="color:#aaa;padding-left:8px;">
+    「<span style="color:#fff;">病院を4月10日にリマインドして</span>」→ 追加（2日前から通知）<br>
+    「<span style="color:#fff;">3日後に荷物の受け取りをリマインドして</span>」→ 相対日付も可<br>
+    「<span style="color:#fff;">リマインダー一覧</span>」→ 登録中の一覧表示<br>
+    「<span style="color:#fff;">リマインダー1番完了</span>」→ 完了マーク<br>
+    「<span style="color:#fff;">リマインダー1番削除</span>」→ 削除
   </div>
 
   <div style="color:#cc88cc;margin-top:6px;margin-bottom:2px;">🔧 システム</div>
@@ -6131,6 +6316,48 @@ function analyzeAndRecord(text) {
     return;
   }
 
+  // === 自然言語トリガー（B）: 既存コマンドへの自然言語エイリアス ===
+
+  // 「株の状況は？」→ ブリーフィング
+  if ((/株|投資/.test(lowerText) && /最近の状況|どうなってる|どんな感じ|教えて|報告/.test(lowerText)) &&
+      !lowerText.includes('ブリーフィング')) {
+    localStorage.removeItem('kitt_watchlist_last_auto_update');
+    addMessage('assistant', '📈 株の状況を確認します！');
+    setTimeout(async () => {
+      await checkAndAutoUpdateWatchlist();
+    }, 300);
+    return;
+  }
+
+  // 「気持ちの推移を見たい」「最近の調子は？」→ 気分グラフ
+  if (/気分|気持ち|体調|調子/.test(lowerText) && /推移|グラフ|最近|どんな感じ|見せて/.test(lowerText) &&
+      !/気分グラフ|気分チャート|気分を見せて/.test(lowerText)) {
+    const recorded = getMoodHistory(30).filter(d => d.moodScore !== null).length;
+    if (recorded === 0) {
+      addMessage('assistant', '📊 まだ気分データがありません。毎日「今日は楽しかった」などと話しかけると蓄積されます。');
+    } else {
+      addSystemMessageWithHTML(getMoodGraphSVG(30));
+    }
+    return;
+  }
+
+  // 「今日何があった？」「今日の記録を見たい」→ 振り返り
+  if (/今日/.test(lowerText) && /何があった|何してた|記録.*見|振り返/.test(lowerText) &&
+      !lowerText.includes('振り返り') && !lowerText.includes('今日の記録')) {
+    const log = getTodayLog();
+    if (!log || (!log.mood && !log.todos && !log.note)) {
+      addMessage('assistant', '📔 今日の記録はまだありません。');
+    } else {
+      let msg = '📔 今日の記録です:\n';
+      if (log.mood) msg += `${getMoodEmoji(log.moodScore||0)} 気分: ${log.mood}\n`;
+      if (log.todos && log.todos.length > 0) msg += `📌 TODO: ${log.todos.join('、')}\n`;
+      if (log.note) msg += `📝 メモ: ${log.note}`;
+      addMessage('assistant', msg.trim());
+    }
+    displayDailyLog();
+    return;
+  }
+
   // 振り返りコマンド（記録を表示）
   if (lowerText.includes('振り返り') || lowerText.includes('今日の記録')) {
     const log = getTodayLog();
@@ -6151,6 +6378,83 @@ function analyzeAndRecord(text) {
       addMessage('assistant', msg.trim());
     }
     displayDailyLog();
+    return;
+  }
+
+  // === リマインダーシステム ===
+
+  // リマインダー追加
+  if (/リマインダー|リマインド/.test(lowerText) && /追加|登録|設定|して$|て$/.test(lowerText)) {
+    const title = parseReminderTitle(text);
+    const dueDate = parseReminderDate(text);
+    if (!title) {
+      addMessage('assistant', '📅 リマインダーのタイトルが読み取れませんでした。例：「病院の予約を4月10日にリマインドして」');
+      return;
+    }
+    if (!dueDate) {
+      addMessage('assistant', `📅 「${title}」の日付が読み取れませんでした。例：「4月10日に」「3日後に」「来週に」などで指定してください。`);
+      return;
+    }
+    addReminder(title, dueDate, 2);
+    const d = new Date(dueDate);
+    addMessage('assistant', `📅 リマインダーを追加しました！\n「${title}」\n📆 ${d.getMonth()+1}月${d.getDate()}日（2日前からお知らせします）`);
+    return;
+  }
+
+  // リマインダー一覧表示
+  if (/リマインダー|リマインド/.test(lowerText) && /一覧|確認|見せて|表示|何がある|リスト/.test(lowerText)) {
+    const list = getReminders().filter(r => !r.done);
+    if (list.length === 0) {
+      addMessage('assistant', '📅 現在リマインダーは登録されていません。');
+    } else {
+      const today = new Date().toISOString().split('T')[0];
+      let msg = `📅 リマインダー一覧（${list.length}件）\n━━━━━━━━\n`;
+      list.forEach((r, i) => {
+        const d = new Date(r.dueDate);
+        const daysLeft = Math.ceil((new Date(r.dueDate) - new Date(today)) / 86400000);
+        const urgency = daysLeft <= 0 ? '⚠️ 期限切れ' : daysLeft === 1 ? '🔴 明日' : daysLeft <= 3 ? `🟠 あと${daysLeft}日` : `🟢 あと${daysLeft}日`;
+        msg += `${i+1}. ${r.title}\n   ${d.getMonth()+1}月${d.getDate()}日 ${urgency}\n`;
+      });
+      addMessage('assistant', msg.trim());
+    }
+    return;
+  }
+
+  // リマインダー完了
+  if (/リマインダー|リマインド/.test(lowerText) && /完了|済み|終わった|done/.test(lowerText)) {
+    const list = getReminders().filter(r => !r.done);
+    if (list.length === 0) {
+      addMessage('assistant', '📅 完了できるリマインダーがありません。');
+      return;
+    }
+    // 番号指定か最初の1件
+    const numMatch = text.match(/(\d+)(?:番目|番|個目)?/);
+    const idx = numMatch ? parseInt(numMatch[1]) - 1 : 0;
+    if (idx < 0 || idx >= list.length) {
+      addMessage('assistant', `📅 ${idx+1}番のリマインダーは見つかりません。`);
+      return;
+    }
+    doneReminder(list[idx].id);
+    addMessage('assistant', `✅ 「${list[idx].title}」を完了しました！`);
+    return;
+  }
+
+  // リマインダー削除
+  if (/リマインダー|リマインド/.test(lowerText) && /削除|消して|消す|外して|取り消し/.test(lowerText)) {
+    const list = getReminders().filter(r => !r.done);
+    if (list.length === 0) {
+      addMessage('assistant', '📅 削除できるリマインダーがありません。');
+      return;
+    }
+    const numMatch = text.match(/(\d+)(?:番目|番|個目)?/);
+    const idx = numMatch ? parseInt(numMatch[1]) - 1 : 0;
+    if (idx < 0 || idx >= list.length) {
+      addMessage('assistant', `📅 ${idx+1}番のリマインダーは見つかりません。`);
+      return;
+    }
+    const removed = list[idx];
+    deleteReminder(removed.id);
+    addMessage('assistant', `🗑️ 「${removed.title}」を削除しました。`);
     return;
   }
 
@@ -6565,6 +6869,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // 飲み会モード: 未確認の候補をチェック
   checkPendingConfirmations();
+
+  // リマインダー: 起動時に期日チェック
+  checkDueReminders();
 
   // 飲み会モード: 30分ごとに位置情報を記録（バックグラウンド）
   setInterval(async () => {
