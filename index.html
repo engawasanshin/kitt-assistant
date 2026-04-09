@@ -519,6 +519,7 @@ body {
     <div style="display:flex;flex-direction:column;gap:1px;">
       <div class="api-counter" onclick="openStatusBoard()" title="Gemini API使用状況"><span class="api-dot" id="apiDot"></span><span id="apiCounterText">--</span></div>
       <div class="api-counter" onclick="openStatusBoard()" title="Alpha Vantage使用状況（本日）"><span class="api-dot" id="avDot"></span><span id="avCounterText">AV: --</span></div>
+      <div class="api-counter" title="記憶使用量（満タン時はClaude Codeへアーカイブ依頼）"><span class="api-dot" id="memoryDot" style="background:#00ff88;box-shadow:0 0 4px #00ff88;"></span><span id="memoryUsageText">MEM: --%</span></div>
     </div>
   </div>
   <div style="display: flex; flex-direction: column; align-items: center;">
@@ -561,6 +562,24 @@ body {
   <!-- 顔写真撮影用 hidden input -->
   <input type="file" id="facePhotoInput" accept="image/*" capture="user"
     style="display:none;" onchange="handleFacePhoto(this.files[0])">
+
+  <!-- オフラインメモエリア（Geminiなしで動作） -->
+  <div id="offlineMemoArea" style="margin-top: 12px;">
+    <div style="font-size:12px;color:#88cc88;margin-bottom:6px;border-bottom:1px solid #1a3a1a;padding-bottom:4px;display:flex;justify-content:space-between;align-items:center;">
+      <span>📝 メモ <span style="font-size:10px;color:#444;">（オフライン対応）</span></span>
+      <button onclick="toggleMemoArea()" id="memoToggleBtn" style="font-size:10px;padding:2px 8px;border:1px solid #2a4a2a;background:#0a1a0a;color:#88cc88;border-radius:4px;cursor:pointer;">▶</button>
+    </div>
+    <div id="memoBody" style="display:none;">
+      <div style="display:flex;gap:4px;margin-bottom:6px;">
+        <textarea id="memoInput" rows="2" placeholder="つぶやきを入力..." style="flex:1;background:#060606;color:#e0e0e0;border:1px solid #2a4a2a;border-radius:4px;padding:6px;font-size:12px;font-family:'Courier New',monospace;resize:none;-webkit-appearance:none;"></textarea>
+        <div style="display:flex;flex-direction:column;gap:4px;">
+          <button onclick="saveMemoEntry(false)" style="background:#1a3a1a;color:#88cc88;border:1px solid #2a6a2a;border-radius:4px;padding:6px 10px;font-size:11px;cursor:pointer;line-height:1.3;">📝<br>記録</button>
+          <button onclick="saveMemoEntry(true)" title="GPS付き" style="background:#0a1a2a;color:#88aaff;border:1px solid #2a4a6a;border-radius:4px;padding:6px 10px;font-size:11px;cursor:pointer;line-height:1.3;">📍<br>GPS</button>
+        </div>
+      </div>
+      <div id="memoListContent" style="font-size:11px;color:#aaa;max-height:200px;overflow-y:auto;-webkit-overflow-scrolling:touch;"></div>
+    </div>
+  </div>
 
   <!-- 日々の記録エリア -->
   <div id="dailyLogArea" style="margin-top: 12px; display: none;">
@@ -1099,9 +1118,17 @@ const MEMORY_MD_URL = 'https://raw.githubusercontent.com/engawasanshin/kitt-assi
 const RECENT_CONVERSATIONS_URL = 'https://kitt-assistant.vercel.app/api/recent';
 const ARCHIVE_SUMMARY_URL = 'https://kitt-assistant.vercel.app/api/archive';
 
+// 長期記憶の上限（この文字数を超えたらClaude Codeにアーカイブ化を依頼）
+const KITT_MEMORY_LIMIT = 100000;
+// アーカイブファイル一覧（Claude Codeが必要に応じてURLを追加していく）
+const KITT_MEMORY_ARCHIVE_URLS = [
+  // 例: 'https://raw.githubusercontent.com/engawasanshin/kitt-assistant/main/kitt_memory_archive_001.md',
+];
+
 let kittMemory = '';
 let recentConversations = '';
 let archiveSummary = '';
+let kittMemoryArchives = []; // ロード済みアーカイブ（古い順）
 let localMemory = JSON.parse(localStorage.getItem('kitt_local_memory') || '[]');
 
 async function loadKittMemory() {
@@ -1129,8 +1156,23 @@ async function loadKittMemory() {
     }
   } catch { /* ignore */ }
 
-  // 4. ローカルメモリ（KITT自身が会話から学んだこと）
+  // 4. アーカイブファイル（古い記憶）
+  kittMemoryArchives = [];
+  for (const url of KITT_MEMORY_ARCHIVE_URLS) {
+    try {
+      const res = await fetch(url + '?t=' + Date.now());
+      if (res.ok) {
+        const text = await res.text();
+        kittMemoryArchives.push(text);
+      }
+    } catch { /* ignore */ }
+  }
+
+  // 5. ローカルメモリ（KITT自身が会話から学んだこと）
   // localMemoryは既にロード済み
+
+  // 記憶使用率インジケーターを更新
+  updateMemoryIndicator();
 }
 
 // 記憶を手動で更新する関数（ボタン用）
@@ -1148,7 +1190,9 @@ async function refreshMemory() {
 
     // 成功フィードバック
     btn.textContent = '✓';
-    addSystemMessage('記憶を更新しました（Memory: ' + (kittMemory ? Math.floor(kittMemory.length/1000) + 'k' : '0') + ', Recent: ' + (recentConversations ? Math.floor(recentConversations.length/1000) + 'k' : '0') + '）');
+    updateMemoryIndicator();
+    const pct = Math.round(kittMemory.length / KITT_MEMORY_LIMIT * 100);
+    addSystemMessage('記憶を更新しました（Memory: ' + (kittMemory ? Math.floor(kittMemory.length/1000) + 'k' : '0') + ' [' + pct + '%], Recent: ' + (recentConversations ? Math.floor(recentConversations.length/1000) + 'k' : '0') + ', Archives: ' + kittMemoryArchives.length + '）');
 
     // デバッグ情報をコンソールに出力
     console.log('Memory updated:', {
@@ -1324,6 +1368,20 @@ function getAppStateContext() {
     }
   } catch(e) { ctx += '\n【リマインダー】取得エラー\n'; }
 
+  // オフラインメモ（直近3件）
+  try {
+    const _memos = getMemos();
+    if (_memos.length > 0) {
+      const _recentMemos = _memos.slice(-3).reverse();
+      ctx += '\n【オフラインメモ（直近3件）】\n';
+      _recentMemos.forEach(m => {
+        const t = new Date(m.timestamp);
+        const dStr = `${t.getMonth()+1}/${t.getDate()} ${String(t.getHours()).padStart(2,'0')}:${String(t.getMinutes()).padStart(2,'0')}`;
+        ctx += `  ・${dStr}${m.lat ? ' 📍' : ''} ${m.text}\n`;
+      });
+    }
+  } catch(e) {}
+
   // 重要な制約
   ctx += '\n【データ参照ルール（アーキテクチャ原則）】\n';
   ctx += '- KITTはマスターインターフェース。サブウインドウはKITTに従属する視覚補助。\n';
@@ -1338,34 +1396,44 @@ function getAppStateContext() {
 function getMemoryContext() {
   let ctx = '';
 
-  // 1. kitt_memory.md（永続的な知見・パターン）- 最優先
+  // 1. アーカイブ（古い記憶）
+  // 概要セクション（冒頭800文字）は常に全量ロード → キーワードマッチに使う
+  // 本文は4200文字まで追加（合計5000文字/アーカイブ）
+  const ARCHIVE_SUMMARY_CHARS = 800;
+  const ARCHIVE_BODY_BUDGET = 4200;
+  for (let i = 0; i < kittMemoryArchives.length; i++) {
+    const arc = kittMemoryArchives[i];
+    if (!arc) continue;
+    const summary = arc.slice(0, ARCHIVE_SUMMARY_CHARS);
+    const bodyStart = ARCHIVE_SUMMARY_CHARS;
+    const bodyEnd = ARCHIVE_SUMMARY_CHARS + ARCHIVE_BODY_BUDGET;
+    const body = arc.length > bodyStart ? arc.slice(bodyStart, bodyEnd) : '';
+    const overflow = arc.length > bodyEnd ? '\n（本文省略 — 全文はアーカイブファイル参照）' : '';
+    ctx += `\n\n--- 過去の記憶アーカイブ #${i + 1} ---\n` + summary + body + overflow;
+  }
+
+  // 2. kitt_memory.md（永続的な知見・パターン）- 最優先・最大100k文字
   if (kittMemory) {
-    const trimmed = kittMemory.length > 1500
-      ? kittMemory.slice(0, 1500) + '\n（省略）'
+    const trimmed = kittMemory.length > KITT_MEMORY_LIMIT
+      ? kittMemory.slice(0, KITT_MEMORY_LIMIT) + '\n（省略 — 記憶が満杯です。Claude Codeへのアーカイブ依頼を検討してください）'
       : kittMemory;
     ctx += '\n\n--- K.I.T.T.の記憶（永続的な知見） ---\n' + trimmed;
   }
 
-  // 2. kitt_recent_conversations.md（直近の詳細会話）- 文脈・ニュアンス保持
+  // 3. kitt_recent_conversations.md（直近の詳細会話）- 文脈・ニュアンス保持
   if (recentConversations) {
-    // 直近の会話は詳細が重要なので、より多く含める
     const trimmed = recentConversations.length > 8000
       ? recentConversations.slice(0, 8000) + '\n（以下省略）'
       : recentConversations;
     ctx += '\n\n--- 最近の会話（詳細）---\n' + trimmed;
   }
 
-  // 3. ローカルメモリ（KITT自身が会話から学んだこと）
+  // 4. ローカルメモリ（KITT自身が会話から学んだこと）
   if (localMemory.length > 0) {
     const recent = localMemory.slice(0, 20);
     ctx += '\n\n--- この端末での会話から学んだこと ---\n';
     ctx += recent.map(m => `- [${m.date}] ${m.fact}`).join('\n');
   }
-
-  // 4. アーカイブ（必要時のみ）- 現時点では空なのでスキップ
-  // if (archiveSummary && archiveSummary.length > 100) {
-  //   ctx += '\n\n--- 過去の会話（要約）---\n' + archiveSummary.slice(0, 2000);
-  // }
 
   return ctx;
 }
@@ -1391,6 +1459,21 @@ function addLocalMemory(fact) {
   localMemory.unshift({ date: getToday(), fact });
   if (localMemory.length > 50) localMemory.length = 50;
   localStorage.setItem('kitt_local_memory', JSON.stringify(localMemory));
+}
+
+function updateMemoryIndicator() {
+  const el = document.getElementById('memoryUsageText');
+  const dot = document.getElementById('memoryDot');
+  if (!el || !dot) return;
+  const used = kittMemory.length;
+  const pct = Math.round(used / KITT_MEMORY_LIMIT * 100);
+  const usedK = Math.round(used / 1000);
+  el.textContent = `MEM: ${pct}%`;
+  el.title = `記憶使用量: ${usedK}k / ${Math.round(KITT_MEMORY_LIMIT/1000)}k 文字`;
+  // 色分け: 緑<50%, 黄50-80%, 赤>80%
+  const color = pct >= 80 ? '#ff2200' : pct >= 50 ? '#ffaa00' : '#00ff88';
+  dot.style.background = color;
+  dot.style.boxShadow = `0 0 4px ${color}`;
 }
 
 // --- Status context for system prompt ---
@@ -1516,7 +1599,7 @@ window.addEventListener('load', async () => {
     addSystemMessage('APIキーを設定してください（右上の歯車アイコン）');
   } else {
     if (chatHistory.length === 0) {
-      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-05l / daily-log-phase3]');
+      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-09e / archive-keyword-search]');
     } else {
       restoreHistory();
     }
@@ -1663,12 +1746,13 @@ async function sendMessage() {
     /顔写真|顔を撮|selfie/.test(_lc) ||
     /体重グラフ|体重.*推移|体重.*見せて|体重.*記録/.test(_lc) ||
     /今日の天気|天気.*教えて|天気.*どう|天気は/.test(_lc) ||
-    /為替|ドル円|元円|レート/.test(_lc) ||
+    /為替|ドル円|元円|(?:^|[\s。、])レート/.test(_lc) ||
     /経費集計|出張経費|経費.*見せて|経費.*合計/.test(_lc) ||
     /エクスポート|バックアップ|書き出し|データ保存/.test(_lc) ||
     /場所.*記録|食事.*記録|記録.*場所|ここを記録|場所.*履歴|食事.*履歴|場所.*見せて|place.*record/.test(_lc) ||
     /出張モード|旅行モード/.test(_lc) ||
     /リマインダー|リマインド/.test(_lc) ||
+    /メモ.*見せて|メモ.*一覧|今日のメモ|メモ.*確認|メモ.*エクスポート/.test(_lc) ||
     _naturalAdd ||
     _isNewsQuery
     // ※_isStockQueryはGeminiに流す（会話できるよう）。ウォッチリストはanalyzeAndRecordで自動表示
@@ -1794,8 +1878,20 @@ async function callGemini(userText) {
   // Build conversation contents for Gemini API
   const contents = [];
 
-  // Add history (Gemini uses 'user' and 'model' roles)
-  for (const msg of chatHistory.slice(0, -1)) { // exclude the current message (already pushed)
+  // analyzeAndRecord() がユーザーメッセージの後にSYSTEMメッセージを追加する場合があるため、
+  // slice(0,-1) では正しく現在のユーザーメッセージを除外できないことがある。
+  // → chatHistory内で現在のユーザーメッセージのインデックスを正確に特定して除外する。
+  let cutIdx = chatHistory.length;
+  for (let i = chatHistory.length - 1; i >= 0; i--) {
+    if (chatHistory[i].role === 'user' && chatHistory[i].text === userText) {
+      cutIdx = i;
+      break;
+    }
+  }
+
+  // 現在メッセージより前の履歴を追加（systemメッセージはUI表示専用のためスキップ）
+  for (const msg of chatHistory.slice(0, cutIdx)) {
+    if (msg.role === 'system') continue; // 家計簿確認等のシステムメッセージはGeminiに送らない
     contents.push({
       role: msg.role === 'user' ? 'user' : 'model',
       parts: [{ text: msg.text }]
@@ -1875,33 +1971,37 @@ function toAvSymbol(symbol) {
  * Alpha Vantage APIで株価取得（GLOBAL_QUOTE）
  */
 async function fetchStockQuote(symbol) {
-  // ① stooq.com で株価取得（無料・CORS対応・APIキー不要）
-  try {
-    const stooqSymbol = symbol.replace(/\.TYO$/, '').replace(/\.T$/, '') + '.jp';
-    const url = `https://stooq.com/q/l/?s=${encodeURIComponent(stooqSymbol)}&f=sd2ohlcvp`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`stooq HTTP ${res.status}`);
-    const text = await res.text();
-    const lines = text.trim().split('\n');
-    if (lines.length >= 2) {
-      // CSV: Symbol,Date,Open,High,Low,Close,Volume,% Change
-      const cols = lines[1].split(',');
-      const close = parseFloat(cols[5]);
-      const changePercent = cols[7] ? cols[7].trim() : '0';
-      if (!isNaN(close) && close > 0) {
-        return {
-          symbol,
-          price: cols[5].trim(),
-          change: null,
-          changePercent: changePercent + '%',
-          source: 'stooq'
-        };
+  // ① stooq.com で株価取得（無料・APIキー不要）直接→プロキシでフォールバック
+  const stooqSymbol = symbol.replace(/\.TYO$/, '').replace(/\.T$/, '') + '.jp';
+  const stooqUrl = `https://stooq.com/q/l/?s=${encodeURIComponent(stooqSymbol)}&f=sd2ohlcvp`;
+  const stooqFetchers = [
+    () => fetch(stooqUrl),
+    () => fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(stooqUrl)}`),
+  ];
+  for (const fetcher of stooqFetchers) {
+    try {
+      const res = await fetcher();
+      if (!res.ok) continue;
+      const text = await res.text();
+      const lines = text.trim().split('\n');
+      if (lines.length >= 2) {
+        // CSV: Symbol,Date,Open,High,Low,Close,Volume,% Change
+        const cols = lines[1].split(',');
+        const close = parseFloat(cols[5]);
+        const changePercent = cols[7] ? cols[7].trim() : '0';
+        if (!isNaN(close) && close > 0) {
+          return {
+            symbol,
+            price: cols[5].trim(),
+            change: null,
+            changePercent: changePercent + '%',
+            source: 'stooq'
+          };
+        }
       }
-    }
-    throw new Error('stooq: 有効データなし');
-  } catch (stooqErr) {
-    console.error('[stooq] 株価取得失敗、Alpha Vantageにフォールバック:', stooqErr.message);
+    } catch(e) { continue; }
   }
+  console.error('[stooq] 株価取得失敗（直接・プロキシ両方）、Alpha Vantageにフォールバック');
 
   // ② Alpha Vantage フォールバック
   const apiKey = await loadAlphaVantageApiKey();
@@ -2034,7 +2134,7 @@ async function saveSettings() {
 
   closeSettings();
   if (chatHistory.length === 0 && apiKey) {
-    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-05l / daily-log-phase3]');
+    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-09e / archive-keyword-search]');
   }
 }
 
@@ -6097,6 +6197,126 @@ async function updateExpenseLocations(limit = 10) {
 }
 
 // ユーザーメッセージを分析して自動記録
+// ========================================
+// オフラインメモ機能（Geminiなし・完全ローカル）
+// ========================================
+function getMemos() {
+  return JSON.parse(localStorage.getItem('kitt_offline_memo') || '[]');
+}
+function _saveMemos(memos) {
+  localStorage.setItem('kitt_offline_memo', JSON.stringify(memos));
+}
+
+async function saveMemoEntry(withGps) {
+  const input = document.getElementById('memoInput');
+  const text = (input.value || '').trim();
+  if (!text) return;
+
+  const entry = { id: Date.now().toString(), text, timestamp: new Date().toISOString(), lat: null, lng: null };
+
+  if (withGps && navigator.geolocation) {
+    try {
+      const pos = await new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, { timeout: 8000 }));
+      entry.lat = pos.coords.latitude;
+      entry.lng = pos.coords.longitude;
+    } catch(e) { /* GPS失敗でも記録続行 */ }
+  }
+
+  const memos = getMemos();
+  memos.push(entry);
+  _saveMemos(memos);
+  input.value = '';
+
+  const gpsStr = entry.lat ? ` 📍(${entry.lat.toFixed(4)},${entry.lng.toFixed(4)})` : '';
+  addSystemMessage(`📝 メモを記録しました${gpsStr}`);
+  updateMemoDisplay();
+}
+
+function updateMemoDisplay() {
+  const content = document.getElementById('memoListContent');
+  if (!content) return;
+  const memos = getMemos();
+  if (memos.length === 0) {
+    content.innerHTML = '<div style="color:#444;padding:4px;">まだメモがありません</div>';
+    return;
+  }
+
+  const today = new Date().toISOString().split('T')[0];
+  const byDay = {};
+  memos.forEach(m => {
+    const day = m.timestamp.split('T')[0];
+    if (!byDay[day]) byDay[day] = [];
+    byDay[day].push(m);
+  });
+
+  const days = Object.keys(byDay).sort().reverse();
+  let html = '';
+  days.forEach((day, di) => {
+    const d = new Date(day + 'T00:00:00');
+    const label = day === today ? '今日' : `${d.getMonth()+1}/${d.getDate()}`;
+    const color = day === today ? '#88cc88' : '#555';
+    html += `<div style="color:${color};margin:${di>0?'8px':0} 0 3px;font-size:10px;">📅 ${label}（${byDay[day].length}件）</div>`;
+    byDay[day].slice().reverse().forEach(m => {
+      const t = new Date(m.timestamp);
+      const timeStr = `${String(t.getHours()).padStart(2,'0')}:${String(t.getMinutes()).padStart(2,'0')}`;
+      const gpsLink = m.lat ? ` <a href="https://maps.google.com/?q=${m.lat},${m.lng}" target="_blank" style="color:#88aaff;text-decoration:none;">📍</a>` : '';
+      const borderColor = day === today ? '#2a5a2a' : '#1a2a1a';
+      const bgColor = day === today ? '#0a1a0a' : '#060606';
+      const textColor = day === today ? '#ccc' : '#777';
+      html += `<div style="margin-bottom:4px;padding:4px 6px;background:${bgColor};border-left:2px solid ${borderColor};border-radius:0 4px 4px 0;">
+        <span style="color:#444;">${timeStr}</span>${gpsLink}
+        <div style="color:${textColor};margin-top:1px;">${escapeHtml(m.text)}</div>
+      </div>`;
+    });
+  });
+  content.innerHTML = html;
+}
+
+function toggleMemoArea() {
+  const body = document.getElementById('memoBody');
+  const btn = document.getElementById('memoToggleBtn');
+  const isOpen = body.style.display !== 'none';
+  body.style.display = isOpen ? 'none' : 'block';
+  btn.textContent = isOpen ? '▶' : '▼';
+  if (!isOpen) updateMemoDisplay();
+}
+
+function showAllMemos() {
+  const memos = getMemos();
+  if (memos.length === 0) {
+    addMessage('assistant', '📝 まだメモがありません。ダッシュボードの「📝 メモ」エリアから記録できます（Geminiなしでも動作）。');
+    return;
+  }
+  const byDay = {};
+  memos.forEach(m => {
+    const day = m.timestamp.split('T')[0];
+    if (!byDay[day]) byDay[day] = [];
+    byDay[day].push(m);
+  });
+  const DAYS = ['日','月','火','水','木','金','土'];
+  let msg = `📝 メモ一覧（計${memos.length}件）\n\n`;
+  Object.keys(byDay).sort().reverse().forEach(day => {
+    const d = new Date(day + 'T00:00:00');
+    msg += `【${d.getMonth()+1}/${d.getDate()}（${DAYS[d.getDay()]}）】\n`;
+    byDay[day].slice().reverse().forEach(m => {
+      const t = new Date(m.timestamp);
+      const timeStr = `${String(t.getHours()).padStart(2,'0')}:${String(t.getMinutes()).padStart(2,'0')}`;
+      msg += `  ${timeStr}${m.lat ? ' 📍' : ''} ${m.text}\n`;
+    });
+    msg += '\n';
+  });
+  addMessage('assistant', msg.trim());
+}
+
+function exportMemosJSON() {
+  const memos = getMemos();
+  const blob = new Blob([JSON.stringify(memos, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `kitt_memo_${new Date().toISOString().split('T')[0]}.json`;
+  a.click();
+}
+
 function analyzeAndRecord(text) {
   const lowerText = text.toLowerCase();
 
@@ -7007,7 +7227,7 @@ function analyzeAndRecord(text) {
   }
 
   // === 為替レート ===
-  if (/為替|ドル円|元円|レート/.test(lowerText)) {
+  if (/為替|ドル円|元円|(?:^|[\s。、])レート/.test(lowerText)) {
     (async () => {
       const f = await fetchForexRates();
       if (f) {
@@ -7214,6 +7434,17 @@ function analyzeAndRecord(text) {
     const removed = list[idx];
     deleteReminder(removed.id);
     addMessage('assistant', `🗑️ 「${removed.title}」を削除しました。`);
+    return;
+  }
+
+  // === オフラインメモ表示 ===
+  if (/メモ.*見せて|メモ.*一覧|今日のメモ|メモ.*確認/.test(lowerText)) {
+    showAllMemos();
+    return;
+  }
+  if (/メモ.*エクスポート/.test(lowerText)) {
+    exportMemosJSON();
+    addMessage('assistant', '📝 メモをJSONでダウンロードしました。');
     return;
   }
 
