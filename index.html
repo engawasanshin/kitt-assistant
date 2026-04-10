@@ -581,6 +581,34 @@ body {
     </div>
   </div>
 
+  <!-- 中国語フレーズ集（オフライン対応） -->
+  <div id="chinaPhrasesArea" style="margin-top:12px;">
+    <div style="font-size:12px;color:#ffcc44;margin-bottom:6px;border-bottom:1px solid #3a2a00;padding-bottom:4px;display:flex;justify-content:space-between;align-items:center;">
+      <span>🇨🇳 中国語フレーズ集 <span style="font-size:10px;color:#555;">（オフライン対応）</span></span>
+      <button onclick="toggleChinaPhrases()" id="phrasesToggleBtn" style="font-size:10px;padding:2px 8px;border:1px solid #5a4a00;background:#1a1000;color:#ffcc44;border-radius:4px;cursor:pointer;">▶</button>
+    </div>
+    <div id="phrasesBody" style="display:none;">
+      <div style="display:flex;gap:4px;margin-bottom:8px;flex-wrap:wrap;">
+        <button onclick="showPhraseCategory('ビジネス')" class="phrase-cat-btn" style="font-size:10px;padding:3px 8px;border:1px solid #5a4a00;background:#1a1000;color:#ffcc44;border-radius:4px;cursor:pointer;">💼 ビジネス</button>
+        <button onclick="showPhraseCategory('移動')" class="phrase-cat-btn" style="font-size:10px;padding:3px 8px;border:1px solid #5a4a00;background:#1a1000;color:#ffcc44;border-radius:4px;cursor:pointer;">🚖 移動</button>
+        <button onclick="showPhraseCategory('食事')" class="phrase-cat-btn" style="font-size:10px;padding:3px 8px;border:1px solid #5a4a00;background:#1a1000;color:#ffcc44;border-radius:4px;cursor:pointer;">🍜 食事</button>
+        <button onclick="showPhraseCategory('緊急')" class="phrase-cat-btn" style="font-size:10px;padding:3px 8px;border:1px solid #aa2200;background:#1a0a00;color:#ff8866;border-radius:4px;cursor:pointer;">🆘 緊急</button>
+      </div>
+      <div id="phrasesContent" style="font-size:11px;color:#ccc;max-height:220px;overflow-y:auto;-webkit-overflow-scrolling:touch;"></div>
+      <!-- 緊急連絡先 -->
+      <div style="margin-top:8px;padding:8px;background:#1a0a00;border:1px solid #aa3300;border-radius:6px;font-size:11px;">
+        <div style="color:#ff8866;margin-bottom:4px;">🆘 緊急連絡先（中国）</div>
+        <div style="line-height:1.8;color:#ccc;">
+          🚔 警察: <a href="tel:110" style="color:#ff8866;">110</a> &nbsp;
+          🚑 救急: <a href="tel:120" style="color:#ff8866;">120</a> &nbsp;
+          🔥 火事: <a href="tel:119" style="color:#ff8866;">119</a><br>
+          🇯🇵 在中国日本大使館（北京）: <a href="tel:+861065322361" style="color:#88aaff;">+86-10-6532-2361</a><br>
+          🇯🇵 在上海日本総領事館: <a href="tel:+862152574766" style="color:#88aaff;">+86-21-5257-4766</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- 日々の記録エリア -->
   <div id="dailyLogArea" style="margin-top: 12px; display: none;">
     <div style="font-size: 12px; color: #88aaff; margin-bottom: 6px; border-bottom: 1px solid #2a2a2a; padding-bottom: 4px;">
@@ -1599,7 +1627,7 @@ window.addEventListener('load', async () => {
     addSystemMessage('APIキーを設定してください（右上の歯車アイコン）');
   } else {
     if (chatHistory.length === 0) {
-      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-09e / archive-keyword-search]');
+      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-10a / china-phrases]');
     } else {
       restoreHistory();
     }
@@ -1753,6 +1781,7 @@ async function sendMessage() {
     /出張モード|旅行モード/.test(_lc) ||
     /リマインダー|リマインド/.test(_lc) ||
     /メモ.*見せて|メモ.*一覧|今日のメモ|メモ.*確認|メモ.*エクスポート/.test(_lc) ||
+    /中国語|フレーズ|緊急連絡先|中国.*連絡|大使館/.test(_lc) ||
     _naturalAdd ||
     _isNewsQuery
     // ※_isStockQueryはGeminiに流す（会話できるよう）。ウォッチリストはanalyzeAndRecordで自動表示
@@ -2134,7 +2163,7 @@ async function saveSettings() {
 
   closeSettings();
   if (chatHistory.length === 0 && apiKey) {
-    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-09e / archive-keyword-search]');
+    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-10a / china-phrases]');
   }
 }
 
@@ -6272,6 +6301,73 @@ function updateMemoDisplay() {
   content.innerHTML = html;
 }
 
+// --- 中国語フレーズ集 ---
+const CHINA_PHRASES = {
+  'ビジネス': [
+    { ja: 'よろしくお願いします', zh: '请多关照', pin: 'Qǐng duō guānzhào' },
+    { ja: 'ありがとうございます', zh: '谢谢', pin: 'Xièxie' },
+    { ja: 'これをお願いします', zh: '麻烦你了', pin: 'Máfan nǐ le' },
+    { ja: '会議室はどこですか？', zh: '会议室在哪里？', pin: 'Huìyì shì zài nǎlǐ?' },
+    { ja: 'トイレはどこですか？', zh: '洗手间在哪里？', pin: 'Xǐshǒujiān zài nǎlǐ?' },
+    { ja: 'もう一度言ってください', zh: '请再说一遍', pin: 'Qǐng zài shuō yī biàn' },
+    { ja: 'わかりません', zh: '我不明白', pin: 'Wǒ bù míngbái' },
+    { ja: '日本語を話せますか？', zh: '你会说日语吗？', pin: 'Nǐ huì shuō Rìyǔ ma?' },
+    { ja: '工場の見学をしたい', zh: '我想参观工厂', pin: 'Wǒ xiǎng cānguān gōngchǎng' },
+    { ja: '名刺を受け取ってください', zh: '请收下我的名片', pin: 'Qǐng shōuxia wǒ de míngpiàn' },
+  ],
+  '移動': [
+    { ja: 'タクシーを呼んでください', zh: '请帮我叫出租车', pin: 'Qǐng bāng wǒ jiào chūzūchē' },
+    { ja: 'ここへ行ってください', zh: '请去这里', pin: 'Qǐng qù zhèlǐ' },
+    { ja: 'ホテルへ', zh: '去酒店', pin: 'Qù jiǔdiàn' },
+    { ja: 'いくらですか？', zh: '多少钱？', pin: 'Duōshǎo qián?' },
+    { ja: 'ここで止めてください', zh: '请在这里停车', pin: 'Qǐng zài zhèlǐ tíngchē' },
+    { ja: '空港へ', zh: '去机场', pin: 'Qù jīchǎng' },
+    { ja: '領収書をください', zh: '请给我发票', pin: 'Qǐng gěi wǒ fāpiào' },
+    { ja: '〜駅はどこですか？', zh: '……站在哪里？', pin: '...zhàn zài nǎlǐ?' },
+  ],
+  '食事': [
+    { ja: 'これをください', zh: '我要这个', pin: 'Wǒ yào zhège' },
+    { ja: 'おいしいです', zh: '很好吃', pin: 'Hěn hǎochī' },
+    { ja: 'お水をください', zh: '请给我水', pin: 'Qǐng gěi wǒ shuǐ' },
+    { ja: '辛くしないでください', zh: '不要辣', pin: 'Bùyào là' },
+    { ja: 'アレルギーがあります（〜）', zh: '我对……过敏', pin: 'Wǒ duì...guòmǐn' },
+    { ja: 'お会計をお願いします', zh: '买单', pin: 'Mǎidān' },
+    { ja: 'WeChat Payで払います', zh: '我用微信支付', pin: 'Wǒ yòng Wēixìn zhīfù' },
+    { ja: '現金で払います', zh: '我用现金', pin: 'Wǒ yòng xiànjīn' },
+  ],
+  '緊急': [
+    { ja: '助けてください', zh: '救命！', pin: 'Jiùmìng!' },
+    { ja: '警察を呼んでください', zh: '请叫警察', pin: 'Qǐng jiào jǐngchá' },
+    { ja: '救急車を呼んでください', zh: '请叫救护车', pin: 'Qǐng jiào jiùhùchē' },
+    { ja: '病院へ連れて行ってください', zh: '请带我去医院', pin: 'Qǐng dài wǒ qù yīyuàn' },
+    { ja: '財布を盗まれました', zh: '我的钱包被偷了', pin: 'Wǒ de qiánbāo bèi tōu le' },
+    { ja: '日本大使館に連絡したい', zh: '我想联系日本大使馆', pin: 'Wǒ xiǎng liánxì Rìběn dàshǐguǎn' },
+    { ja: '気分が悪いです', zh: '我感觉不舒服', pin: 'Wǒ gǎnjué bù shūfu' },
+    { ja: 'パスポートをなくしました', zh: '我的护照丢了', pin: 'Wǒ de hùzhào diū le' },
+  ],
+};
+
+function toggleChinaPhrases() {
+  const body = document.getElementById('phrasesBody');
+  const btn = document.getElementById('phrasesToggleBtn');
+  const isOpen = body.style.display !== 'none';
+  body.style.display = isOpen ? 'none' : 'block';
+  btn.textContent = isOpen ? '▶' : '▼';
+  if (!isOpen) showPhraseCategory('ビジネス');
+}
+
+function showPhraseCategory(cat) {
+  const phrases = CHINA_PHRASES[cat] || [];
+  const el = document.getElementById('phrasesContent');
+  el.innerHTML = phrases.map(p =>
+    `<div style="padding:5px 0;border-bottom:1px solid #2a2a2a;">
+      <div style="color:#aaa;font-size:10px;">${p.ja}</div>
+      <div style="color:#ffcc44;font-size:13px;margin:1px 0;">${p.zh}</div>
+      <div style="color:#888;font-size:10px;">${p.pin}</div>
+    </div>`
+  ).join('');
+}
+
 function toggleMemoArea() {
   const body = document.getElementById('memoBody');
   const btn = document.getElementById('memoToggleBtn');
@@ -7445,6 +7541,19 @@ function analyzeAndRecord(text) {
   if (/メモ.*エクスポート/.test(lowerText)) {
     exportMemosJSON();
     addMessage('assistant', '📝 メモをJSONでダウンロードしました。');
+    return;
+  }
+  if (/中国語|フレーズ|緊急連絡先|中国.*連絡|大使館/.test(lowerText)) {
+    const area = document.getElementById('chinaPhrasesArea');
+    const body = document.getElementById('phrasesBody');
+    const btn = document.getElementById('phrasesToggleBtn');
+    if (body.style.display === 'none') {
+      body.style.display = 'block';
+      btn.textContent = '▼';
+      showPhraseCategory('ビジネス');
+      area.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+    addMessage('assistant', '🇨🇳 中国語フレーズ集を開きました。ダッシュボードでカテゴリを選んでください。\n\n🆘 緊急連絡先: 警察110 / 救急120 / 火事119\n🇯🇵 日本大使館（北京）: +86-10-6532-2361');
     return;
   }
 
