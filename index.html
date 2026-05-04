@@ -6251,12 +6251,26 @@ async function saveMemoEntry(withGps) {
 
   const entry = { id: Date.now().toString(), text, timestamp: new Date().toISOString(), lat: null, lng: null };
 
-  if (withGps && navigator.geolocation) {
-    try {
-      const pos = await new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, { timeout: 8000 }));
-      entry.lat = pos.coords.latitude;
-      entry.lng = pos.coords.longitude;
-    } catch(e) { /* GPS失敗でも記録続行 */ }
+  if (withGps) {
+    if (!navigator.geolocation) {
+      addSystemMessage('⚠️ このブラウザはGPS非対応です。GPS なしで記録します。');
+    } else {
+      addSystemMessage('📡 GPS取得中...');
+      try {
+        const pos = await new Promise((res, rej) =>
+          navigator.geolocation.getCurrentPosition(res, rej, { timeout: 15000, enableHighAccuracy: false })
+        );
+        entry.lat = pos.coords.latitude;
+        entry.lng = pos.coords.longitude;
+      } catch(e) {
+        let reason = '';
+        if (e.code === 1) reason = '位置情報の使用が許可されていません。Safari設定 > このWebサイト > 位置情報 を「許可」にしてください。';
+        else if (e.code === 2) reason = '位置情報を取得できませんでした（電波・GPS環境を確認してください）。';
+        else if (e.code === 3) reason = '取得がタイムアウトしました。屋外など電波の良い場所で再試行してください。';
+        else reason = e.message || '不明なエラー';
+        addSystemMessage(`⚠️ GPS取得失敗: ${reason}`);
+      }
+    }
   }
 
   const memos = getMemos();
