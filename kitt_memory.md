@@ -360,7 +360,7 @@ GPS記録後にメモを追加できるようになった。
 | ~~🐛中~~ | ~~`TypeError: Cannot read property 'map' of undefined`~~ | ✅ 2026-05-04修正。`analyzeTechnicalIndicators`で`hist.closes`のnullガード追加 |
 | ~~🐛中~~ | ~~Stooq直接・プロキシ両方失敗~~ | ✅ 2026-05-04修正。`fetchStockQuote`にcorsproxy/thingproxy/codetabs追加（計5プロキシ）。5/4夜に4/5件取得成功を確認 |
 | 🐛高 | 📍GPSボタン：ボタンは押せるが座標が記録されない | 5/4夜に確認。`saveMemoEntry(true)`実行後GPS失敗時にエラー表示なし・サイレント継続。iOS Safariでの位置情報権限またはGeolocation API失敗が原因か |
-| 🐛中 | Alpha Vantage APIキー問題 | 「未設定」と診断されるのにリクエストが試みられる矛盾。Invalid API call / API制限メッセージが出る |
+| 🐛中 | Alpha Vantage API複合問題 | ①「未設定」と診断されるのにリクエストが試みられる矛盾 ②株価詳細情報（価格・変動率）が取得できていない ③Invalid API call（パラメータ書式・キー不正の可能性）④API制限メッセージが表示される ⑤レスポンスのパースエラー・UIへの反映エラー ⑥フォールバックロジックが機能していない |
 | 🐛中 | ウォッチリストへの銘柄追加が部分的にしか機能しない・データ消失 | K.I.T.T.の記憶とアプリの実態に重大な不一致あり |
 | 🐛中 | ウォッチリストがスクロールできない・画面占有 | 会話エリアが隠れる。折りたたみ機能の不全 |
 | 🐛中 | 銘柄詳細画面への遷移不可・グラフ表示されない | APIデータ取得不全が原因。テクニカル分析ボタンも機能しない |
