@@ -1084,7 +1084,7 @@ function updateApiCounterUI() {
 
 // --- Alpha Vantage 使用量管理 ---
 
-const AV_DAILY_LIMIT = 500;
+const AV_DAILY_LIMIT = 25;
 
 function getAvUsage() {
   const today = getToday();
@@ -1107,7 +1107,7 @@ function updateAvCounterUI() {
   if (!el) return;
   el.textContent = `AV: ${usage.count}/${AV_DAILY_LIMIT}`;
   if (dot) {
-    dot.className = 'api-dot' + (usage.count >= 480 ? ' danger' : usage.count >= 400 ? ' warn' : '');
+    dot.className = 'api-dot' + (usage.count >= 23 ? ' danger' : usage.count >= 15 ? ' warn' : '');
   }
 }
 
@@ -3137,26 +3137,30 @@ async function fetchDailyHistory(ticker, months = 3) {
         console.error('[stooq] 失敗、Alpha Vantageにフォールバック:', yhErr.message);
       }
 
-      // ② Alpha Vantage フォールバック
+      // ② Alpha Vantage フォールバック（1銘柄1回のみ、AV枠を節約）
       const alphaKey = await loadAlphaVantageApiKey();
       if (!alphaKey) throw new Error('Yahoo Financeでデータ取得できませんでした。Alpha Vantage APIキーも未設定です。');
 
-      const symbolsToTry = [toAvSymbol(ticker)];
-      if (toAvSymbol(ticker) !== ticker) {
-        symbolsToTry.push(ticker);
-        symbolsToTry.push(ticker.replace(/\.\w+$/, ''));
+      // 日次上限チェック（ローカルカウンター）
+      const avUsageNow = getAvUsage();
+      if (avUsageNow.count >= AV_DAILY_LIMIT) {
+        throw new Error('Alpha Vantage API制限に到達しました（無料プランは25リクエスト/日）。明日リセットされます。');
       }
+
+      // シンボル形式は最も可能性の高い1つだけ試す（複数試行でAV枠を無駄遣いしない）
+      const symbolsToTry = [toAvSymbol(ticker)];
 
       for (const sym of symbolsToTry) {
         const url = `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=${sym}&outputsize=compact&apikey=${alphaKey}`;
         const res = await fetch(url);
         if (!res.ok) throw new Error(`Alpha Vantage API Error: ${res.status}`);
         const d = await res.json();
-        recordAvCall();
-        if (d['Note'] || d['Information']) throw new Error('Alpha Vantage API制限に到達しました（無料プランは25リクエスト/日）。明日リセットされます。');
+        if (d['Note'] || d['Information']) {
+          throw new Error('Alpha Vantage API制限に到達しました（無料プランは25リクエスト/日）。明日リセットされます。');
+        }
+        recordAvCall(); // 成功・失敗確定後にカウント
         if (d['Error Message']) {
-          if (sym !== symbolsToTry[symbolsToTry.length - 1]) continue;
-          throw new Error(`データ取得失敗: Yahoo Finance・Alpha Vantage両方で取得できませんでした`);
+          throw new Error(`データ取得失敗: Yahoo Finance・Alpha Vantage両方で取得できませんでした（${sym}）`);
         }
 
         const timeSeries = d['Time Series (Daily)'];
