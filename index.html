@@ -5016,14 +5016,10 @@ async function exportFullConversation() {
     return;
   }
 
-  // Get location with 500ms limit to preserve user gesture context for navigator.share()
+  // navigator.share()はユーザージェスチャー直後に呼ぶ必要があるため、
+  // GPS取得はexport前に行わない（ログにlocationなしで保存）
   addSystemMessage(`会話ログをエクスポートしています... (新規: ${newMessagesCount}件)`);
-  const location = await Promise.race([
-    getCurrentLocation(),
-    new Promise(r => setTimeout(() => r(null), 500))
-  ]);
-
-  const result = await conversationToMarkdown(location, lastExportIndex);
+  const result = await conversationToMarkdown(null, lastExportIndex);
   if (!result) {
     addSystemMessage('エクスポートに失敗しました。');
     return;
