@@ -1627,7 +1627,7 @@ window.addEventListener('load', async () => {
     addSystemMessage('APIキーを設定してください（右上の歯車アイコン）');
   } else {
     if (chatHistory.length === 0) {
-      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-10a / china-phrases]');
+      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-05-04a / bugfix]');
     } else {
       restoreHistory();
     }
@@ -2006,6 +2006,9 @@ async function fetchStockQuote(symbol) {
   const stooqFetchers = [
     () => fetch(stooqUrl),
     () => fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(stooqUrl)}`),
+    () => fetch(`https://corsproxy.io/?${encodeURIComponent(stooqUrl)}`),
+    () => fetch(`https://thingproxy.freeboard.io/fetch/${stooqUrl}`),
+    () => fetch(`https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(stooqUrl)}`),
   ];
   for (const fetcher of stooqFetchers) {
     try {
@@ -2163,7 +2166,7 @@ async function saveSettings() {
 
   closeSettings();
   if (chatHistory.length === 0 && apiKey) {
-    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-04-10a / china-phrases]');
+    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-05-04a / bugfix]');
   }
 }
 
@@ -3184,7 +3187,8 @@ async function analyzeTechnicalIndicators(ticker, months = 3) {
   await new Promise(r => setTimeout(r, 300));
 
   const hist = await fetchDailyHistory(ticker, months);
-  const closes = hist.closes;
+  const closes = hist?.closes;
+  if (!closes || !Array.isArray(closes)) throw new Error('価格データ（closes）が取得できませんでした');
   const n = closes.length;
 
   if (n < 25) throw new Error(`データが不足しています（${n}件）。日本株は取引量が少なくAlpha Vantageで取得できない場合があります。`);
@@ -5866,6 +5870,7 @@ function getToeicStats() {
 // ============================================
 
 function addExpenseRecord(dateStr, amount, category, company = '', ocrText = '', source = 'receipt') {
+  if (!amount || amount <= 0) return { recordCount: 0, monthTotal: 0, todayTotal: 0, categoryBreakdown: {} };
   const records = JSON.parse(localStorage.getItem('kitt_expense_records') || '[]');
   records.push({
     date: dateStr,
@@ -6239,7 +6244,10 @@ function _saveMemos(memos) {
 async function saveMemoEntry(withGps) {
   const input = document.getElementById('memoInput');
   const text = (input.value || '').trim();
-  if (!text) return;
+  if (!text) {
+    addSystemMessage('📝 テキストを入力してからボタンを押してください。');
+    return;
+  }
 
   const entry = { id: Date.now().toString(), text, timestamp: new Date().toISOString(), lat: null, lng: null };
 
@@ -7092,9 +7100,11 @@ function analyzeAndRecord(text) {
   }
 
   // 家計簿記録の検出（OCR連携 - Phase 1拡張版）
-  if (lowerText.includes('レシート') || lowerText.includes('家計簿') ||
+  // 位置情報コマンド（「ここを記録して」等）は家計簿と誤認しない
+  const _isLocationCmd = /ここを記録|ここで記録|場所を記録して|この場所を記録/.test(lowerText);
+  if (!_isLocationCmd && (lowerText.includes('レシート') || lowerText.includes('家計簿') ||
       lowerText.includes('記録して') || lowerText.includes('支出') ||
-      lowerText.includes('スクショ') || lowerText.includes('写真')) {
+      lowerText.includes('スクショ') || lowerText.includes('写真'))) {
     const dateStr = parseRelativeDate(text);
 
     // ソース判定（レシート/スクショ/写真）
@@ -7418,7 +7428,7 @@ function analyzeAndRecord(text) {
 
   // 「ここを記録して」明示コマンド
   if (/ここを記録|ここで記録|場所を記録して|この場所を記録/.test(lowerText)) {
-    await (async () => {
+    (async () => {
       await recordCurrentLocation(text);
     })();
     return;
