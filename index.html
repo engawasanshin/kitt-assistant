@@ -4882,9 +4882,8 @@ function _prefetchExportLocation() {
     { timeout: 10000, maximumAge: 300000, enableHighAccuracy: false }
   );
 }
-// ページ読み込み後30秒で初回取得、以降5分ごとに更新
+// ページ読み込み後30秒で1回だけ取得（OSが5分キャッシュするため定期実行不要）
 setTimeout(_prefetchExportLocation, 30000);
-setInterval(_prefetchExportLocation, 5 * 60 * 1000);
 
 // IndexedDBにディレクトリハンドルを永続保存
 async function saveDirHandle(handle) {
