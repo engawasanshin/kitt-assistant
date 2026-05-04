@@ -4872,6 +4872,20 @@ async function conversationToMarkdown(location = null, startIndex = 0, contextSi
 // --- Auto-save directory (Mac: File System Access API) ---
 let savedDirHandle = null;
 
+// エクスポート用GPS位置キャッシュ（バックグラウンド事前取得）
+let _cachedExportLocation = null;
+function _prefetchExportLocation() {
+  if (!navigator.geolocation) return;
+  navigator.geolocation.getCurrentPosition(
+    pos => { _cachedExportLocation = { latitude: pos.coords.latitude, longitude: pos.coords.longitude }; },
+    () => {},
+    { timeout: 10000, maximumAge: 300000, enableHighAccuracy: false }
+  );
+}
+// ページ読み込み後30秒で初回取得、以降5分ごとに更新
+setTimeout(_prefetchExportLocation, 30000);
+setInterval(_prefetchExportLocation, 5 * 60 * 1000);
+
 // IndexedDBにディレクトリハンドルを永続保存
 async function saveDirHandle(handle) {
   return new Promise((resolve, reject) => {
@@ -5016,10 +5030,9 @@ async function exportFullConversation() {
     return;
   }
 
-  // navigator.share()はユーザージェスチャー直後に呼ぶ必要があるため、
-  // GPS取得はexport前に行わない（ログにlocationなしで保存）
+  // バックグラウンドでキャッシュ済みの位置情報を使用（share()のジェスチャー文脈を保持）
   addSystemMessage(`会話ログをエクスポートしています... (新規: ${newMessagesCount}件)`);
-  const result = await conversationToMarkdown(null, lastExportIndex);
+  const result = await conversationToMarkdown(_cachedExportLocation, lastExportIndex);
   if (!result) {
     addSystemMessage('エクスポートに失敗しました。');
     return;
