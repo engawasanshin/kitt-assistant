@@ -5016,9 +5016,12 @@ async function exportFullConversation() {
     return;
   }
 
-  // Get location (optional, non-blocking)
+  // Get location with 500ms limit to preserve user gesture context for navigator.share()
   addSystemMessage(`会話ログをエクスポートしています... (新規: ${newMessagesCount}件)`);
-  const location = await getCurrentLocation();
+  const location = await Promise.race([
+    getCurrentLocation(),
+    new Promise(r => setTimeout(() => r(null), 500))
+  ]);
 
   const result = await conversationToMarkdown(location, lastExportIndex);
   if (!result) {
