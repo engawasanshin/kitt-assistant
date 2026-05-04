@@ -2033,38 +2033,70 @@ async function fetchStockQuote(symbol) {
       }
     } catch(e) { continue; }
   }
-  console.error('[stooq] 株価取得失敗（直接・プロキシ両方）、Alpha Vantageにフォールバック');
+  console.error('[stooq] 株価取得失敗（直接・プロキシ両方）、Yahoo Financeにフォールバック');
 
-  // ② Alpha Vantage フォールバック
+  // ② Yahoo Finance フォールバック（現在価格）
+  const yhSymbol = symbol.replace(/\.TYO$/, '.T');
+  const yhUrl = `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yhSymbol)}?interval=1d&range=1d`;
+  const yhAttempts = [
+    yhUrl,
+    `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yhSymbol)}?interval=1d&range=1d`,
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(yhUrl)}`,
+    `https://corsproxy.io/?${encodeURIComponent(yhUrl)}`,
+    `https://thingproxy.freeboard.io/fetch/${yhUrl}`,
+  ];
+  for (const url of yhAttempts) {
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+      if (!res.ok) continue;
+      const data = await res.json();
+      const meta = data?.chart?.result?.[0]?.meta;
+      if (!meta) continue;
+      const price = meta.regularMarketPrice || meta.previousClose;
+      if (!price || price <= 0) continue;
+      const prevClose = meta.previousClose || meta.chartPreviousClose;
+      const change = prevClose ? (price - prevClose).toFixed(1) : null;
+      const changePercent = prevClose ? (((price - prevClose) / prevClose) * 100).toFixed(2) + '%' : null;
+      console.log(`[yahoo] 現在価格取得成功: ${symbol} = ${price}`);
+      return { symbol, price: price.toString(), change, changePercent, source: 'yahoo' };
+    } catch(e) { continue; }
+  }
+  console.error('[yahoo] 株価取得失敗、Alpha Vantageにフォールバック');
+
+  // ③ Alpha Vantage フォールバック（GLOBAL_QUOTE）
   const apiKey = await loadAlphaVantageApiKey();
   if (!apiKey) {
-    throw new Error('株価取得失敗（stooq・Alpha Vantage両方）');
+    throw new Error('株価取得失敗（stooq・Yahoo・Alpha Vantage全て失敗）');
   }
 
-  const avSymbol = toAvSymbol(symbol);
-  const url = `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${avSymbol}&apikey=${apiKey}`;
-
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Alpha Vantage API Error: ${res.status}`);
-
-  const data = await res.json();
-  if (data['Error Message']) throw new Error(data['Error Message']);
-  if (data['Note'] || data['Information']) {
-    throw new Error('Alpha Vantage API制限に到達しました（無料プランは5リクエスト/分、500リクエスト/日）');
+  // 複数シンボル形式を試行（日本株は形式が異なる場合あり）
+  const avSymbolsToTry = [toAvSymbol(symbol), symbol, symbol.replace(/\.\w+$/, '')];
+  for (const avSym of avSymbolsToTry) {
+    try {
+      const url = `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${avSym}&apikey=${apiKey}`;
+      const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+      if (!res.ok) continue;
+      const data = await res.json();
+      if (data['Error Message']) { console.error(`[AV] ${avSym}: ${data['Error Message']}`); continue; }
+      if (data['Note'] || data['Information']) {
+        throw new Error('Alpha Vantage API制限に到達しました（無料プランは25リクエスト/日）');
+      }
+      recordAvCall();
+      const quote = data['Global Quote'];
+      if (!quote || !quote['05. price']) continue;
+      return {
+        symbol: quote['01. symbol'],
+        price: quote['05. price'],
+        change: quote['09. change'],
+        changePercent: quote['10. change percent'],
+        source: 'alphavantage'
+      };
+    } catch(e) {
+      if (e.message.includes('API制限')) throw e;
+      continue;
+    }
   }
-
-  recordAvCall();
-
-  const quote = data['Global Quote'];
-  if (!quote) throw new Error(`銘柄データが見つかりません: ${symbol}`);
-
-  return {
-    symbol: quote['01. symbol'],
-    price: quote['05. price'],
-    change: quote['09. change'],
-    changePercent: quote['10. change percent'],
-    source: 'alphavantage'
-  };
+  throw new Error(`株価取得失敗: ${symbol}（stooq・Yahoo・Alpha Vantage全て失敗）`);
 }
 
 /**
@@ -3121,8 +3153,7 @@ async function fetchDailyHistory(ticker, months = 3) {
         if (!res.ok) throw new Error(`Alpha Vantage API Error: ${res.status}`);
         const d = await res.json();
         recordAvCall();
-        if (d['Note']) throw new Error('Alpha Vantage 分間制限（5回/分）に達しました。1分待って再試行してください。');
-        if (d['Information']) throw new Error('Alpha Vantage 日次上限（25回/日）に達しました。明日リセットされます。Yahoo Finance / stooq も取得できない場合はお知らせください。');
+        if (d['Note'] || d['Information']) throw new Error('Alpha Vantage API制限に到達しました（無料プランは25リクエスト/日）。明日リセットされます。');
         if (d['Error Message']) {
           if (sym !== symbolsToTry[symbolsToTry.length - 1]) continue;
           throw new Error(`データ取得失敗: Yahoo Finance・Alpha Vantage両方で取得できませんでした`);
