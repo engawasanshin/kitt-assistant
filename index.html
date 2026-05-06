@@ -1136,12 +1136,12 @@ function showAvConfirm(ticker, cacheDate, remaining) {
     const dialog = document.createElement('div');
     dialog.style.cssText = 'background:#111;border:1px solid #2a4a2a;border-radius:8px;padding:20px;max-width:300px;width:100%;font-family:"Courier New",monospace;';
     dialog.innerHTML = `
-      <div style="color:#88cc88;font-size:11px;letter-spacing:2px;margin-bottom:12px;">[ ALPHA VANTAGE ]</div>
+      <div style="color:#88cc88;font-size:11px;letter-spacing:2px;margin-bottom:12px;">[ データ取得確認 ]</div>
       <p style="font-size:13px;color:#ccc;margin-bottom:8px;line-height:1.5;">${ticker} のデータは ${cacheDate} に取得済みです。</p>
-      <p style="font-size:12px;color:#888;margin-bottom:16px;">本日の最新データを取得しますか？<br><span style="color:#88cc88;">残り: ${remaining}/${AV_DAILY_LIMIT}回</span></p>
+      <p style="font-size:12px;color:#888;margin-bottom:16px;">最新データを取得してテクニカル分析を実行しますか？<br><span style="color:#888;font-size:11px;">※Yahoo Finance / stooq を優先して取得します</span><br><span style="color:#88cc88;">AV残り: ${remaining}/${AV_DAILY_LIMIT}回</span></p>
       <div style="display:flex;gap:8px;justify-content:flex-end;">
-        <button id="avConfirmNo" style="padding:8px 16px;background:#1a1a1a;border:1px solid #333;color:#888;border-radius:4px;font-size:12px;cursor:pointer;">キャッシュを使用</button>
-        <button id="avConfirmYes" style="padding:8px 16px;background:#1a3a1a;border:1px solid #2a6a2a;color:#88cc88;border-radius:4px;font-size:12px;cursor:pointer;">新規取得</button>
+        <button id="avConfirmNo" style="padding:8px 16px;background:#1a1a1a;border:1px solid #333;color:#888;border-radius:4px;font-size:12px;cursor:pointer;">キャッシュで分析</button>
+        <button id="avConfirmYes" style="padding:8px 16px;background:#1a3a1a;border:1px solid #2a6a2a;color:#88cc88;border-radius:4px;font-size:12px;cursor:pointer;">最新データで分析</button>
       </div>
     `;
     overlay.appendChild(dialog);
@@ -4344,6 +4344,8 @@ async function handleTechnicalAnalysis(ticker) {
           const chartTitle = `📈 ${name}（${ticker}） ※キャッシュ ${cacheDate}`;
           _lastChartState = { hist: staleCache, indicators: ind, title: chartTitle };
           document.getElementById('chartModalTitle').textContent = chartTitle;
+          document.getElementById('chartAnalysisText').textContent =
+            `⚠️ API制限中のためキャッシュデータ（${cacheDate}）を表示しています。\n\nテクニカル分析（Gemini AI）は最新データ取得後に実行されます。\nAPIリセット後（翌日）に再度「📈 分析」を実行してください。`;
           openChartModal();
           _scheduleChartDraw(staleCache, ind);
           addSystemMessageWithButton('キャッシュチャートを表示中。チャートが見えない場合:', '📈 チャートを開く', reopenLastChart);
