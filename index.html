@@ -1753,6 +1753,9 @@ async function sendMessage() {
   // ユーザーメッセージを分析して自動記録
   analyzeAndRecord(text);
 
+  // メッセージ送信後にダッシュボードを即時更新（最新メッセージの文脈を反映）
+  updateDashboard();
+
   // ローカルコマンドで処理すべきパターン → Geminiをスキップ
   // （analyzeAndRecordが処理し済み。Geminiが「未実装」と誤回答するのを防ぐ）
   const _lc = text.toLowerCase();
@@ -8108,9 +8111,17 @@ function getTimeBasedGreeting(hour) {
 
 // 時間帯別コメントを生成（日々の記録システム統合）
 function getTimeBasedComment(hour, historyLength) {
+  // 会話が活発なときは同じ質問を繰り返さない
+  if (historyLength > 8) {
+    return '💬 いつでもお声がけください。';
+  }
   if (hour >= 5 && hour < 12) {
     // 朝: 目標・気分の確認
-    return '📝 今日の目標を一つ教えていただけますか？今日の気分はいかがですか？';
+    if (historyLength === 0) {
+      return '📝 今日の目標を一つ教えていただけますか？今日の気分はいかがですか？';
+    } else {
+      return '📝 今日も頑張りましょう！何かお手伝いできることはありますか？';
+    }
   } else if (hour >= 12 && hour < 18) {
     // 昼: 午前の振り返り・ランチ
     if (historyLength > 0) {
