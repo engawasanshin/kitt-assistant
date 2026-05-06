@@ -540,9 +540,15 @@ body {
 </div>
 
 <!-- Greeting Message Area -->
-<div class="greeting-area" id="greetingArea" style="padding: 16px; margin: 0 16px; background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); margin-bottom: 12px; max-height: 220px; overflow-y: auto; -webkit-overflow-scrolling: touch;">
-  <div id="greetingMessage" style="font-size: 18px; font-weight: bold; color: #00ff00; margin-bottom: 8px;"></div>
-  <div id="contextualComment" style="font-size: 14px; color: #b0b0b0; line-height: 1.5;"></div>
+<div class="greeting-area" id="greetingArea" style="margin: 0 16px; background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); margin-bottom: 8px; flex-shrink: 0;">
+  <!-- 常に表示するヘッダー行 -->
+  <div style="display:flex; justify-content:space-between; align-items:center; padding: 8px 14px;">
+    <div id="greetingMessage" style="font-size: 15px; font-weight: bold; color: #00ff00; flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
+    <button onclick="toggleGreetingPanel()" id="greetingToggleBtn" title="詳細を開閉" style="font-size:11px; padding:2px 8px; border:1px solid #2a2a4a; background:#0a0a1a; color:#8888cc; border-radius:4px; cursor:pointer; flex-shrink:0; margin-left:8px;">▶ 詳細</button>
+  </div>
+  <!-- 折りたたみ可能な詳細パネル -->
+  <div id="greetingBody" style="display:none; padding: 0 14px 12px; max-height: 180px; overflow-y: auto;">
+  <div id="contextualComment" style="font-size: 13px; color: #b0b0b0; line-height: 1.5; margin-bottom: 8px;"></div>
   <!-- 投資銘柄候補表示エリア -->
   <div id="investmentCandidates" style="margin-top: 12px; display: none;">
     <div style="font-size: 12px; color: #ff8866; margin-bottom: 8px; border-bottom: 1px solid #2a2a2a; padding-bottom: 4px;">
@@ -617,6 +623,7 @@ body {
     <div id="dailyLogContent" style="font-size: 12px; color: #ccc; line-height: 1.6;"></div>
   </div>
 
+  </div><!-- /greetingBody -->
 </div>
 
 <!-- ウォッチリスト表示エリア（greetingAreaの外に独立配置） -->
@@ -2597,6 +2604,15 @@ function toggleWatchlist() {
   body.style.display = isCollapsed ? 'block' : 'none';
   btn.textContent = isCollapsed ? '👀 ウォッチリスト ▼' : '👀 ウォッチリスト ▶';
   localStorage.setItem('kitt_watchlist_collapsed', isCollapsed ? '0' : '1');
+}
+
+function toggleGreetingPanel() {
+  const body = document.getElementById('greetingBody');
+  const btn = document.getElementById('greetingToggleBtn');
+  const isCollapsed = body.style.display === 'none';
+  body.style.display = isCollapsed ? 'block' : 'none';
+  btn.textContent = isCollapsed ? '▼ 詳細' : '▶ 詳細';
+  localStorage.setItem('kitt_greeting_collapsed', isCollapsed ? '0' : '1');
 }
 
 function displayWatchlist(watchlist) {
@@ -7952,6 +7968,15 @@ function updateDashboard() {
 
   if (greetingEl) greetingEl.textContent = greeting;
   if (commentEl) commentEl.textContent = comment;
+
+  // greetingBodyの折りたたみ状態を復元（デフォルト: 折りたたみ）
+  const greetingCollapsed = localStorage.getItem('kitt_greeting_collapsed') !== '0';
+  const greetingBody = document.getElementById('greetingBody');
+  const greetingToggleBtn = document.getElementById('greetingToggleBtn');
+  if (greetingBody && greetingToggleBtn) {
+    greetingBody.style.display = greetingCollapsed ? 'none' : 'block';
+    greetingToggleBtn.textContent = greetingCollapsed ? '▶ 詳細' : '▼ 詳細';
+  }
 
   // ウォッチリストはキーワードに関係なく常に表示
   const _wl = getWatchlist();
