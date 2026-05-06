@@ -1704,7 +1704,13 @@ function addSystemMessageWithButton(text, buttonLabel, buttonFn) {
   const btn = document.createElement('button');
   btn.textContent = buttonLabel;
   btn.style.cssText = 'display:block;margin-top:8px;padding:7px 16px;background:#1a3a1a;border:1px solid #2a6a2a;color:#88cc88;border-radius:4px;font-size:12px;cursor:pointer;font-family:"Courier New",monospace;width:100%;text-align:left;';
-  btn.onclick = buttonFn;
+  btn.onclick = () => {
+    buttonFn();
+    btn.disabled = true;
+    btn.textContent = '✅ 記録済み';
+    btn.style.opacity = '0.5';
+    btn.style.cursor = 'default';
+  };
   div.appendChild(btn);
   chatArea.appendChild(div);
   chatArea.scrollTop = chatArea.scrollHeight;
@@ -7222,6 +7228,21 @@ function analyzeAndRecord(text) {
   const _isFoodOrQuantityDesc =
     /[0-9]+\s*[個本枚皿杯人前合缶袋箱切れ品点]/.test(text) ||
     /定食|丼|弁当|ラーメン|うどん|そば|チャーハン|炒飯|餃子|焼きそば|カレー|パスタ|ピザ|寿司|刺身|焼肉|しゃぶしゃぶ|天ぷら|とんかつ|唐揚げ|コロッケ|おにぎり|小籠包|エビ餃子|焼き鳥|串焼き/.test(text);
+  // 食事描写+金額 → 確認ボタンを表示（KITTの会話は継続）
+  if (_isFoodOrQuantityDesc && text.length < 150 && !_isInvestmentCtx) {
+    const foodParsed = parseManualInput(text);
+    if (foodParsed && foodParsed.amount > 0) {
+      const foodDateStr = parseRelativeDate(text);
+      addSystemMessageWithButton(
+        `💰 食費 ¥${foodParsed.amount.toLocaleString()} として家計簿に記録しますか？`,
+        '✅ 食費として記録する',
+        () => {
+          const stats = addExpenseRecord(foodDateStr, foodParsed.amount, '食費', '', text, 'manual');
+          addSystemMessage(`💰 食費 ¥${foodParsed.amount.toLocaleString()} を記録しました。今月合計 ¥${stats.monthTotal.toLocaleString()}`);
+        }
+      );
+    }
+  }
   // 短いテキスト（100文字以下）で金額を含む場合は手動入力と判定
   if (text.length < 100 && !lowerText.includes('レシート') && !lowerText.includes('スクショ') && !_isInvestmentCtx && !_isFoodOrQuantityDesc) {
     const manualParsed = parseManualInput(text);
@@ -7249,7 +7270,7 @@ function analyzeAndRecord(text) {
       const categoryMsg = manualParsed.category !== 'その他' ? ` (${manualParsed.category})` : '';
       const companyMsg = manualParsed.company ? ` - ${manualParsed.company}` : '';
       addSystemMessage(`💰 家計簿記録を追加しました: ¥${manualParsed.amount.toLocaleString()}${categoryMsg}${companyMsg}。今月合計 ¥${stats.monthTotal.toLocaleString()}`);
-      return;  // 手動入力として処理完了
+      // return しない → KITTのGemini応答も継続する
     }
   }
 
