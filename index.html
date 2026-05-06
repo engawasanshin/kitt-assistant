@@ -3179,6 +3179,9 @@ async function fetchDailyHistory(ticker, months = 3) {
         if (!res.ok) throw new Error(`Alpha Vantage API Error: ${res.status}`);
         const d = await res.json();
         if (d['Note'] || d['Information']) {
+          // サーバー側制限を検出 → ローカルカウンターを上限に同期して以降の無駄な呼び出しを防ぐ
+          localStorage.setItem('kitt_av_usage', JSON.stringify({ date: getToday(), count: AV_DAILY_LIMIT }));
+          updateAvCounterUI();
           throw new Error('Alpha Vantage API制限に到達しました（無料プランは25リクエスト/日）。明日リセットされます。');
         }
         if (d['Error Message']) {
@@ -4357,7 +4360,7 @@ async function handleTechnicalAnalysis(ticker) {
           addSystemMessage(`⚠️ ${err.message}\nキャッシュ表示も失敗しました: ${e2.message}`);
         }
       } else {
-        addSystemMessage(`⚠️ ${err.message}\n少し時間をおいて再度お試しください。`);
+        addSystemMessage(`⚠️ ${name}（${ticker}）のキャッシュデータがありません。\nAPI制限中のため今日は取得できません。\n明日APIがリセットされたら再度「📈 分析」を実行してください。`);
       }
     } else {
       addSystemMessage(`❌ テクニカル分析エラー: ${err.message}`);
