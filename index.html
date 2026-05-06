@@ -7218,8 +7218,12 @@ function analyzeAndRecord(text) {
   // Phase 2.5: 手動入力パターンの検出（簡易入力）
   // 投資・株関連の文脈では家計簿として記録しない（株価の金額を誤検知防止）
   const _isInvestmentCtx = /inpex|インペックス|インペクス|東電|東京電力|ディスコ|スクリーン|screen|トヨタ|三菱ufj|株価|ウォッチ|チャート|テクニカル|配当|銘柄|1605|9501|6146|7735|7203|8306|移動平均|ボリンジャー|上場|投資信託|etf|ファンド|急騰|急落|高値|安値|終値|始値|出来高/.test(lowerText);
+  // 食事描写・数量記述は家計簿として誤記録しない（「唐揚げ定食15個780円」等の誤認識防止）
+  const _isFoodOrQuantityDesc =
+    /[0-9]+\s*[個本枚皿杯人前合缶袋箱切れ品点]/.test(text) ||
+    /定食|丼|弁当|ラーメン|うどん|そば|チャーハン|炒飯|餃子|焼きそば|カレー|パスタ|ピザ|寿司|刺身|焼肉|しゃぶしゃぶ|天ぷら|とんかつ|唐揚げ|コロッケ|おにぎり|小籠包|エビ餃子|焼き鳥|串焼き/.test(text);
   // 短いテキスト（100文字以下）で金額を含む場合は手動入力と判定
-  if (text.length < 100 && !lowerText.includes('レシート') && !lowerText.includes('スクショ') && !_isInvestmentCtx) {
+  if (text.length < 100 && !lowerText.includes('レシート') && !lowerText.includes('スクショ') && !_isInvestmentCtx && !_isFoodOrQuantityDesc) {
     const manualParsed = parseManualInput(text);
     if (manualParsed && manualParsed.amount > 0) {
       const dateStr = parseRelativeDate(text);
