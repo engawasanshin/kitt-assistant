@@ -1282,7 +1282,7 @@ function getAppStateContext() {
   const avUsage = JSON.parse(localStorage.getItem('kitt_av_usage') || '{"count":0,"date":""}');
   const today = new Date().toISOString().split('T')[0];
   const avCount = (avUsage.date === today) ? (avUsage.count || 0) : 0;
-  ctx += `Alpha Vantage API使用量（本日）: ${avCount}/500\n`;
+  ctx += `Alpha Vantage API使用量（本日）: ${avCount}/${AV_DAILY_LIMIT}（無料プランは${AV_DAILY_LIMIT}リクエスト/日）\n`;
 
   // --- アプリ健全性チェック ---
   ctx += '\n【アプリ健全性】\n';
