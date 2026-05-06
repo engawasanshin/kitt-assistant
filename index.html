@@ -627,12 +627,16 @@ body {
 </div>
 
 <!-- ウォッチリスト表示エリア（greetingAreaの外に独立配置） -->
-<div id="watchlistArea" style="display: none; margin: 0 16px 8px; background: #0d0d0d; border: 1px solid #2a1a0a; border-radius: 8px; padding: 8px 12px; flex-shrink: 0;">
-  <div style="display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: #ff8866; margin-bottom: 4px;">
+<div id="watchlistArea" style="display: none; margin: 0 16px 8px; background: #0d0d0d; border: 1px solid #2a1a0a; border-radius: 8px; flex-shrink: 0;">
+  <!-- 常に表示するヘッダー行 -->
+  <div style="display: flex; justify-content: space-between; align-items: center; padding: 6px 12px;">
     <button onclick="toggleWatchlist()" id="watchlistToggleBtn" style="font-size: 11px; padding: 2px 8px; border: 1px solid #553322; background: #1a0a00; color: #ff8866; border-radius: 4px; cursor: pointer;">👀 ウォッチリスト ▶</button>
-    <button onclick="handleUpdateWatchlist()" style="font-size: 10px; padding: 4px 8px; border: none; background: #ff2200; color: #fff; border-radius: 4px; cursor: pointer;">🔄 更新</button>
   </div>
-  <div id="watchlistBody" style="display: none;">
+  <!-- 折りたたみ可能な本体 -->
+  <div id="watchlistBody" style="display: none; padding: 0 12px 8px;">
+    <div style="display: flex; justify-content: flex-end; margin-bottom: 6px;">
+      <button onclick="handleUpdateWatchlist()" style="font-size: 10px; padding: 4px 8px; border: none; background: #ff2200; color: #fff; border-radius: 4px; cursor: pointer;">🔄 更新</button>
+    </div>
     <div id="watchlistStats" style="font-size: 11px; color: #aaa; margin-bottom: 6px;"></div>
     <div id="watchlistContent" style="font-size: 13px; color: #ccc; line-height: 1.6; max-height: 220px; overflow-y: auto; overflow-x: hidden; padding-right: 4px;"></div>
   </div>
