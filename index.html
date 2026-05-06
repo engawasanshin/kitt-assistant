@@ -3019,58 +3019,48 @@ async function fetchDailyHistoryYahoo(ticker, months = 3) {
     async () => { const r = await fetch(`https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(yhUrl2)}`, { signal: AbortSignal.timeout(TIMEOUT) }); if (!r.ok) throw new Error(`HTTP ${r.status}`); return parseYahooJson(await r.json(), 'q2.codetabs'); },
   ];
 
-  for (const fetcher of yahooFetchers) {
-    try {
-      const result = await fetcher();
-      return result;
-    } catch (e) {
-      console.error(`[yahoo] 失敗: ${e.message}`);
-    }
-  }
+  // Yahoo Finance: 全パターンを並列実行、最初の成功を使用
+  const yahooResult = await Promise.any(yahooFetchers.map(f => f())).catch(() => null);
+  if (yahooResult) return yahooResult;
+  console.error('[yahoo] 全試行失敗、stooqへフォールバック');
 
   // ② stooq.com（CSV形式、認証不要）
   const stooqSymbol = ticker.replace(/\.TYO$/, '').replace(/\.T$/, '') + '.jp';
-  const d2 = new Date();
-  const d1 = new Date();
-  d1.setMonth(d1.getMonth() - Math.max(months, 3) - 1);
+  const d2s = new Date();
+  const d1s = new Date();
+  d1s.setMonth(d1s.getMonth() - Math.max(months, 3) - 1);
   const fmt = d => d.toISOString().split('T')[0].replace(/-/g, '');
-  const stooqUrl = `https://stooq.com/q/d/l/?s=${encodeURIComponent(stooqSymbol)}&d1=${fmt(d1)}&d2=${fmt(d2)}&i=d`;
+  const stooqUrl = `https://stooq.com/q/d/l/?s=${encodeURIComponent(stooqSymbol)}&d1=${fmt(d1s)}&d2=${fmt(d2s)}&i=d`;
   const stooqUrlNoDate = `https://stooq.com/q/d/l/?s=${encodeURIComponent(stooqSymbol)}&i=d`;
 
-  // stooq CSVとして有効かチェック（"Date,"ヘッダー行が必須）
+  // stooq CSVとして有効かチェック（"Date,"ヘッダー行 or "date," が必須、JSON誤認識を防ぐ）
   function isValidStooqCsv(text) {
     if (!text || text.length < 30) return false;
-    return text.trim().split('\n')[0].toLowerCase().startsWith('date,');
+    const first = text.trim().split('\n')[0].toLowerCase();
+    return first.includes('date') && first.includes(',') && !first.startsWith('{') && !first.startsWith('<');
   }
 
   const stooqFetchers = [
     async () => { const r = await fetch(stooqUrl, { signal: AbortSignal.timeout(TIMEOUT) }); if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.text(); },
-    // allorigins /raw
     async () => { const r = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(stooqUrl)}`, { signal: AbortSignal.timeout(TIMEOUT) }); if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.text(); },
-    // allorigins /get → contentsを抽出（JSONラッパー誤認識を防ぐ）
     async () => { const r = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(stooqUrl)}`, { signal: AbortSignal.timeout(TIMEOUT) }); if (!r.ok) throw new Error(`HTTP ${r.status}`); const j = await r.json(); return j.contents || ''; },
     async () => { const r = await fetch(`https://corsproxy.io/?${encodeURIComponent(stooqUrl)}`, { signal: AbortSignal.timeout(TIMEOUT) }); if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.text(); },
     async () => { const r = await fetch(`https://thingproxy.freeboard.io/fetch/${stooqUrl}`, { signal: AbortSignal.timeout(TIMEOUT) }); if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.text(); },
     async () => { const r = await fetch(`https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(stooqUrl)}`, { signal: AbortSignal.timeout(TIMEOUT) }); if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.text(); },
-    // 日付範囲なしで再挑戦（stooqが最新データを返す）
     async () => { const r = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(stooqUrlNoDate)}`, { signal: AbortSignal.timeout(TIMEOUT) }); if (!r.ok) throw new Error(`HTTP ${r.status}`); const j = await r.json(); return j.contents || ''; },
     async () => { const r = await fetch(`https://corsproxy.io/?${encodeURIComponent(stooqUrlNoDate)}`, { signal: AbortSignal.timeout(TIMEOUT) }); if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.text(); },
   ];
 
-  let csvText = null;
-  for (const fetcher of stooqFetchers) {
-    try {
-      const t = await fetcher();
-      if (isValidStooqCsv(t)) {
-        csvText = t;
-        console.log(`[stooq] 成功`);
-        break;
-      }
-      console.error(`[stooq] 無効レスポンス(${t.length}bytes): ${t.slice(0, 80)}`);
-    } catch (ex) {
-      console.error(`[stooq] 失敗: ${ex.message}`);
-    }
-  }
+  // stooq: 全パターンを並列実行、最初の有効CSVを使用
+  const csvText = await Promise.any(
+    stooqFetchers.map(f => f().then(t => {
+      if (!isValidStooqCsv(t)) throw new Error(`invalid CSV: ${t.slice(0, 60)}`);
+      return t;
+    }))
+  ).catch(err => {
+    console.error('[stooq] 全試行失敗:', err?.errors?.[0]?.message || err?.message);
+    return null;
+  });
 
   if (!csvText) throw new Error(`${stooqSymbol}のデータ取得に失敗しました（Yahoo/stooq全プロキシ試行済み）`);
 
@@ -3218,7 +3208,7 @@ async function fetchDailyHistory(ticker, months = 3) {
         localStorage.setItem(cacheKey, JSON.stringify(cache));
         return historicalData;
       }
-      throw new Error('データ取得失敗: Yahoo Finance・stooq・Alpha Vantage全て失敗しました。しばらく待って再試行してください。');
+      throw new Error(`データ取得失敗: Yahoo Finance・stooq・Alpha Vantage全て失敗しました。\nAVシンボル試行: ${symbolsToTry.join(', ')}。AVキー設定を確認するか、しばらく待って再試行してください。`);
     } finally {
       delete _avPendingFetches[ticker];
     }
