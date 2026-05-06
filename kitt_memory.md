@@ -704,6 +704,12 @@ GPS記録後にメモを追加できるようになった。
 - **健全性チェックキー名バグ**（2026-03-29）: kitt_av_key_encrypted → alpha_vantage_api_key_encryptedに修正
 
 ### 最終更新
+2026-05-06 (2): Claude Code - バグ全件解消・Tips強化。
+  ①Bug#5完了: stooq CSV Gzip自動解凍（decompressResponse / DecompressionStream）・Promise.any並列フェッチ実装。AV .TYO→.Tフォールバック・制限カウンター即時同期・stooqテスト診断コマンド追加。
+  ②Bug#6完了: getAppStateContext()のAV使用量表示が「XX/500」→「XX/25」に修正。KITTが「まだ余裕がある」と誤認してAVを呼び続けていた根本原因の一つ。
+  ③Bug#7完了: sendMessage()後にupdateDashboard()を即時呼び出し（以前は60秒ごとのみ）。会話8件超でのtip繰り返しを抑制。
+  ④Bug#8完了: 食事描写（定食/個/ラーメン等）を家計簿自動記録から除外。代わりに「💰 食費として記録しますか？[✅ 食費として記録する]」確認ボタンを表示。KITTの会話応答も継続（return廃止）。
+  ⑤Tips強化: getAppStateContext()に現在表示中のTipを注入→KITTがTipへの返答と認識して自然に応答できる。Tip種類を曜日ローテーションで拡充（朝7種・昼5種・夜6種: 体重・体調スコア・Duolingo・顔写真・支出等）。
 2026-05-06: Claude Code - 全6件inboxログ処理（5/5朝〜5/6 11:09分）。greetingArea/watchlist折りたたみ確認（塩川さん「とてもいいですね」）。stooq Gzip根本原因特定・Bug#5修正完了（Gzip解凍・並列fetch・AV .TYO→.Tフォールバック・AV制限カウンター同期）。AV free plan = 25/日（500ではない）確認。観葉植物植え替え相談（ウンベラータ・トックリキワタ→直径30cm四角プラスチック鉢・バーミキュライト）を生活記録に追加。
 2026-04-05 (10): Claude Code - 日々の記録 Phase 3実装（体調スコア・顔写真・AI顔色診断）。v2026-04-05l。
 2026-04-05 (9): Claude Code - 天気・為替・体重・音声読み上げ・出張経費集計を一括実装。v2026-04-05k。
