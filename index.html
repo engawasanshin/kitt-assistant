@@ -2974,6 +2974,7 @@ JSON形式で回答してください。
 async function fetchDailyHistoryYahoo(ticker, months = 3) {
   const yhSymbol = ticker.replace(/\.TYO$/, '.T');
   const range = months <= 1 ? '1mo' : months <= 3 ? '3mo' : months <= 6 ? '6mo' : '1y';
+  const TIMEOUT = 15000; // モバイル回線対応
 
   // Yahoo Finance JSON レスポンスをパースして返すヘルパー
   function parseYahooJson(data, src) {
@@ -2996,67 +2997,78 @@ async function fetchDailyHistoryYahoo(ticker, months = 3) {
     };
   }
 
-  // Yahoo Finance JSON取得ヘルパー（URL → パース済みオブジェクト）
-  async function tryYahooUrl(url, label) {
-    const r = await fetch(url, { signal: AbortSignal.timeout(10000) });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const d = await r.json();
-    return parseYahooJson(d, label);
-  }
-
-  // ① Yahoo Finance を複数エンドポイント・プロキシで試みる
+  // ① Yahoo Finance: 直接 + プロキシ (allorigins /raw と /get 両方試す)
   const yhUrl2 = `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yhSymbol)}?interval=1d&range=${range}`;
   const yhUrl1 = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yhSymbol)}?interval=1d&range=${range}`;
-  const yahooAttempts = [
-    { url: yhUrl2,  label: 'query2.direct' },
-    { url: yhUrl1,  label: 'query1.direct' },
-    { url: `https://api.allorigins.win/raw?url=${encodeURIComponent(yhUrl2)}`,  label: 'query2.allorigins' },
-    { url: `https://api.allorigins.win/raw?url=${encodeURIComponent(yhUrl1)}`,  label: 'query1.allorigins' },
-    { url: `https://corsproxy.io/?${encodeURIComponent(yhUrl2)}`,               label: 'query2.corsproxy' },
-    { url: `https://corsproxy.io/?${encodeURIComponent(yhUrl1)}`,               label: 'query1.corsproxy' },
-    { url: `https://thingproxy.freeboard.io/fetch/${yhUrl2}`,                   label: 'query2.thingproxy' },
-    { url: `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(yhUrl2)}`, label: 'query2.codetabs' },
+
+  const yahooFetchers = [
+    // 直接アクセス
+    async () => { const r = await fetch(yhUrl2, { signal: AbortSignal.timeout(TIMEOUT) }); if (!r.ok) throw new Error(`HTTP ${r.status}`); return parseYahooJson(await r.json(), 'q2.direct'); },
+    async () => { const r = await fetch(yhUrl1, { signal: AbortSignal.timeout(TIMEOUT) }); if (!r.ok) throw new Error(`HTTP ${r.status}`); return parseYahooJson(await r.json(), 'q1.direct'); },
+    // allorigins /raw
+    async () => { const r = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(yhUrl2)}`, { signal: AbortSignal.timeout(TIMEOUT) }); if (!r.ok) throw new Error(`HTTP ${r.status}`); return parseYahooJson(await r.json(), 'q2.ao.raw'); },
+    async () => { const r = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(yhUrl1)}`, { signal: AbortSignal.timeout(TIMEOUT) }); if (!r.ok) throw new Error(`HTTP ${r.status}`); return parseYahooJson(await r.json(), 'q1.ao.raw'); },
+    // allorigins /get (JSONラッパー形式) - /rawが効かない場合の代替
+    async () => { const r = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(yhUrl2)}`, { signal: AbortSignal.timeout(TIMEOUT) }); if (!r.ok) throw new Error(`HTTP ${r.status}`); const j = await r.json(); if (!j.contents) throw new Error('ao.get: empty'); return parseYahooJson(JSON.parse(j.contents), 'q2.ao.get'); },
+    async () => { const r = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(yhUrl1)}`, { signal: AbortSignal.timeout(TIMEOUT) }); if (!r.ok) throw new Error(`HTTP ${r.status}`); const j = await r.json(); if (!j.contents) throw new Error('ao.get: empty'); return parseYahooJson(JSON.parse(j.contents), 'q1.ao.get'); },
+    // corsproxy.io
+    async () => { const r = await fetch(`https://corsproxy.io/?${encodeURIComponent(yhUrl2)}`, { signal: AbortSignal.timeout(TIMEOUT) }); if (!r.ok) throw new Error(`HTTP ${r.status}`); return parseYahooJson(await r.json(), 'q2.corsproxy'); },
+    async () => { const r = await fetch(`https://corsproxy.io/?${encodeURIComponent(yhUrl1)}`, { signal: AbortSignal.timeout(TIMEOUT) }); if (!r.ok) throw new Error(`HTTP ${r.status}`); return parseYahooJson(await r.json(), 'q1.corsproxy'); },
+    // thingproxy + codetabs
+    async () => { const r = await fetch(`https://thingproxy.freeboard.io/fetch/${yhUrl2}`, { signal: AbortSignal.timeout(TIMEOUT) }); if (!r.ok) throw new Error(`HTTP ${r.status}`); return parseYahooJson(await r.json(), 'q2.thingproxy'); },
+    async () => { const r = await fetch(`https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(yhUrl2)}`, { signal: AbortSignal.timeout(TIMEOUT) }); if (!r.ok) throw new Error(`HTTP ${r.status}`); return parseYahooJson(await r.json(), 'q2.codetabs'); },
   ];
-  for (const { url, label } of yahooAttempts) {
+
+  for (const fetcher of yahooFetchers) {
     try {
-      const result = await tryYahooUrl(url, label);
-      console.log(`[yahoo] 成功: ${label}`);
+      const result = await fetcher();
       return result;
     } catch (e) {
-      console.error(`[yahoo] ${label} 失敗: ${e.message}`);
+      console.error(`[yahoo] 失敗: ${e.message}`);
     }
   }
 
-  // ② stooq.com（CSV形式、APIキー不要）
+  // ② stooq.com（CSV形式、認証不要）
   const stooqSymbol = ticker.replace(/\.TYO$/, '').replace(/\.T$/, '') + '.jp';
   const d2 = new Date();
   const d1 = new Date();
   d1.setMonth(d1.getMonth() - Math.max(months, 3) - 1);
   const fmt = d => d.toISOString().split('T')[0].replace(/-/g, '');
   const stooqUrl = `https://stooq.com/q/d/l/?s=${encodeURIComponent(stooqSymbol)}&d1=${fmt(d1)}&d2=${fmt(d2)}&i=d`;
+  const stooqUrlNoDate = `https://stooq.com/q/d/l/?s=${encodeURIComponent(stooqSymbol)}&i=d`;
 
-  const stooqProxies = [
-    u => u,
-    u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
-    u => `https://corsproxy.io/?${encodeURIComponent(u)}`,
-    u => `https://thingproxy.freeboard.io/fetch/${u}`,
-    u => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(u)}`,
+  // stooq CSVとして有効かチェック（"Date,"ヘッダー行が必須）
+  function isValidStooqCsv(text) {
+    if (!text || text.length < 30) return false;
+    return text.trim().split('\n')[0].toLowerCase().startsWith('date,');
+  }
+
+  const stooqFetchers = [
+    async () => { const r = await fetch(stooqUrl, { signal: AbortSignal.timeout(TIMEOUT) }); if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.text(); },
+    // allorigins /raw
+    async () => { const r = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(stooqUrl)}`, { signal: AbortSignal.timeout(TIMEOUT) }); if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.text(); },
+    // allorigins /get → contentsを抽出（JSONラッパー誤認識を防ぐ）
+    async () => { const r = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(stooqUrl)}`, { signal: AbortSignal.timeout(TIMEOUT) }); if (!r.ok) throw new Error(`HTTP ${r.status}`); const j = await r.json(); return j.contents || ''; },
+    async () => { const r = await fetch(`https://corsproxy.io/?${encodeURIComponent(stooqUrl)}`, { signal: AbortSignal.timeout(TIMEOUT) }); if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.text(); },
+    async () => { const r = await fetch(`https://thingproxy.freeboard.io/fetch/${stooqUrl}`, { signal: AbortSignal.timeout(TIMEOUT) }); if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.text(); },
+    async () => { const r = await fetch(`https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(stooqUrl)}`, { signal: AbortSignal.timeout(TIMEOUT) }); if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.text(); },
+    // 日付範囲なしで再挑戦（stooqが最新データを返す）
+    async () => { const r = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(stooqUrlNoDate)}`, { signal: AbortSignal.timeout(TIMEOUT) }); if (!r.ok) throw new Error(`HTTP ${r.status}`); const j = await r.json(); return j.contents || ''; },
+    async () => { const r = await fetch(`https://corsproxy.io/?${encodeURIComponent(stooqUrlNoDate)}`, { signal: AbortSignal.timeout(TIMEOUT) }); if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.text(); },
   ];
+
   let csvText = null;
-  for (const makeProxy of stooqProxies) {
-    const proxyUrl = makeProxy(stooqUrl);
+  for (const fetcher of stooqFetchers) {
     try {
-      const r = await fetch(proxyUrl, { signal: AbortSignal.timeout(10000) });
-      if (!r.ok) { console.error(`[stooq] HTTP ${r.status}: ${proxyUrl.slice(0,50)}`); continue; }
-      const t = await r.text();
-      if (t.length > 30 && !t.trim().startsWith('<') && t.includes(',')) {
+      const t = await fetcher();
+      if (isValidStooqCsv(t)) {
         csvText = t;
-        console.log(`[stooq] 成功: ${proxyUrl.slice(0, 60)}`);
+        console.log(`[stooq] 成功`);
         break;
       }
       console.error(`[stooq] 無効レスポンス(${t.length}bytes): ${t.slice(0, 80)}`);
     } catch (ex) {
-      console.error(`[stooq] 失敗: ${proxyUrl.slice(0, 50)}: ${ex.message}`);
+      console.error(`[stooq] 失敗: ${ex.message}`);
     }
   }
 
@@ -3158,9 +3170,9 @@ async function fetchDailyHistory(ticker, months = 3) {
         console.error('[stooq] 失敗、Alpha Vantageにフォールバック:', yhErr.message);
       }
 
-      // ② Alpha Vantage フォールバック（1銘柄1回のみ、AV枠を節約）
+      // ② Alpha Vantage フォールバック（AV枠を節約：.TYO→.T の順に試す）
       const alphaKey = await loadAlphaVantageApiKey();
-      if (!alphaKey) throw new Error('Yahoo Financeでデータ取得できませんでした。Alpha Vantage APIキーも未設定です。');
+      if (!alphaKey) throw new Error('Yahoo Finance/stooqでデータ取得できませんでした。Alpha Vantage APIキーも未設定です。');
 
       // 日次上限チェック（ローカルカウンター）
       const avUsageNow = getAvUsage();
@@ -3168,8 +3180,8 @@ async function fetchDailyHistory(ticker, months = 3) {
         throw new Error('Alpha Vantage API制限に到達しました（無料プランは25リクエスト/日）。明日リセットされます。');
       }
 
-      // シンボル形式は最も可能性の高い1つだけ試す（複数試行でAV枠を無駄遣いしない）
-      const symbolsToTry = [toAvSymbol(ticker)];
+      // .TYO形式 → .T形式 の順で試す（形式不一致でError Messageが返る場合に対応）
+      const symbolsToTry = [toAvSymbol(ticker), ticker.replace(/\.TYO$/, '.T')].filter((s, i, a) => a.indexOf(s) === i);
 
       for (const sym of symbolsToTry) {
         const url = `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=${sym}&outputsize=compact&apikey=${alphaKey}`;
@@ -3179,10 +3191,12 @@ async function fetchDailyHistory(ticker, months = 3) {
         if (d['Note'] || d['Information']) {
           throw new Error('Alpha Vantage API制限に到達しました（無料プランは25リクエスト/日）。明日リセットされます。');
         }
-        recordAvCall(); // 成功・失敗確定後にカウント
         if (d['Error Message']) {
-          throw new Error(`データ取得失敗: Yahoo Finance・Alpha Vantage両方で取得できませんでした（${sym}）`);
+          console.error(`[AV] ${sym}: Error Message → 次のシンボル形式を試します`);
+          recordAvCall(); // シンボル不正でもAPIコールは消費される
+          continue; // 次のシンボル形式を試す
         }
+        recordAvCall(); // データ取得成功
 
         const timeSeries = d['Time Series (Daily)'];
         if (!timeSeries) throw new Error(`${ticker}のデータが取得できませんでした`);
@@ -3204,7 +3218,7 @@ async function fetchDailyHistory(ticker, months = 3) {
         localStorage.setItem(cacheKey, JSON.stringify(cache));
         return historicalData;
       }
-      throw new Error('全データソースで取得失敗');
+      throw new Error('データ取得失敗: Yahoo Finance・stooq・Alpha Vantage全て失敗しました。しばらく待って再試行してください。');
     } finally {
       delete _avPendingFetches[ticker];
     }
