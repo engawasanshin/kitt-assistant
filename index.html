@@ -6913,7 +6913,7 @@ function analyzeAndRecord(text) {
         msg += `  ・${item.name}（${item.ticker}）${price}\n`;
       });
     }
-    msg += `\n【Alpha Vantage API】本日: ${avCount}/500\n`;
+    msg += `\n【Alpha Vantage API】本日: ${avCount}/${AV_DAILY_LIMIT}\n`;
     msg += `【会話エクスポート】最終: ${lastExport !== '未実行' ? new Date(lastExport).toLocaleString('ja-JP') : '未実行'} / ${lastExportIndex}件目まで\n`;
     msg += `【ウォッチリスト表示】${collapsed === '0' ? '展開中' : '折りたたみ中'}\n`;
     msg += `【ローカル記憶】${localMemLen}件\n`;
@@ -6941,6 +6941,48 @@ function analyzeAndRecord(text) {
     setTimeout(async () => {
       await checkAndAutoUpdateWatchlist();
     }, 100);
+    return;
+  }
+
+  // 株価データ診断コマンド（「株価テスト」「データ診断」）
+  if (lowerText.includes('株価テスト') || lowerText.includes('データ診断') || lowerText.includes('stooqテスト')) {
+    addSystemMessage('🔬 株価データソース診断を開始します...');
+    (async () => {
+      const testTicker = '7203.jp';
+      const histUrl = `https://stooq.com/q/d/l/?s=${testTicker}&i=d`;
+      const quoteUrl = `https://stooq.com/q/l/?s=${testTicker}&f=sd2ohlcvp`;
+      const proxies = [
+        { label: 'allorigins/raw(hist)', url: `https://api.allorigins.win/raw?url=${encodeURIComponent(histUrl)}` },
+        { label: 'allorigins/get(hist)', url: null, getUrl: `https://api.allorigins.win/get?url=${encodeURIComponent(histUrl)}`, isGet: true },
+        { label: 'corsproxy(hist)',     url: `https://corsproxy.io/?${encodeURIComponent(histUrl)}` },
+        { label: 'allorigins/raw(qt)', url: `https://api.allorigins.win/raw?url=${encodeURIComponent(quoteUrl)}` },
+        { label: 'corsproxy(qt)',      url: `https://corsproxy.io/?${encodeURIComponent(quoteUrl)}` },
+      ];
+      let results = '🔬 stooq診断結果:\n';
+      for (const p of proxies) {
+        try {
+          let text;
+          if (p.isGet) {
+            const r = await fetch(p.getUrl, { signal: AbortSignal.timeout(10000) });
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            const j = await r.json();
+            text = j.contents || '';
+          } else {
+            const r = await fetch(p.url, { signal: AbortSignal.timeout(10000) });
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            text = await r.text();
+          }
+          const first50 = text.slice(0, 60).replace(/\n/g, '↵');
+          results += `✅ ${p.label}: ${first50}\n`;
+        } catch (e) {
+          results += `❌ ${p.label}: ${e.message}\n`;
+        }
+      }
+      // AVカウント確認
+      const avU = getAvUsage();
+      results += `\nAV本日カウント: ${avU.count}/${AV_DAILY_LIMIT}`;
+      addSystemMessage(results);
+    })();
     return;
   }
 
