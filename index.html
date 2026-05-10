@@ -1673,7 +1673,7 @@ window.addEventListener('load', async () => {
     addSystemMessage('APIキーを設定してください（右上の歯車アイコン）');
   } else {
     if (chatHistory.length === 0) {
-      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-05-08a / bugfix]');
+      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-05-09a / annotation]');
     } else {
       restoreHistory();
     }
@@ -2251,7 +2251,7 @@ async function saveSettings() {
 
   closeSettings();
   if (chatHistory.length === 0 && apiKey) {
-    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-05-08a / bugfix]');
+    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-05-09a / annotation]');
   }
 }
 
@@ -4623,6 +4623,50 @@ function drawStockChart(hist, indicators) {
   drawLine(sma5,  '#ffcc44', 1.5);
   drawLine(sma25, '#ff8844', 1.5);
 
+  // ── アノテーション: ゴールデン/デッドクロス（全期間）
+  for (let i = 1; i < n; i++) {
+    if (sma5[i] === null || sma25[i] === null || sma5[i-1] === null || sma25[i-1] === null) continue;
+    const isGC = sma5[i-1] < sma25[i-1] && sma5[i] >= sma25[i];
+    const isDC = sma5[i-1] > sma25[i-1] && sma5[i] <= sma25[i];
+    if (!isGC && !isDC) continue;
+    const x = xOf(i);
+    const y = yOf((sma5[i] + sma25[i]) / 2); // クロス点の中間Y
+    ctx.beginPath();
+    if (isGC) {
+      ctx.moveTo(x, y - 9); ctx.lineTo(x - 5, y); ctx.lineTo(x + 5, y);
+      ctx.fillStyle = '#ffd700';
+    } else {
+      ctx.moveTo(x, y + 9); ctx.lineTo(x - 5, y); ctx.lineTo(x + 5, y);
+      ctx.fillStyle = '#ff5555';
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = isGC ? '#ffd700' : '#ff5555';
+    ctx.font = '7px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(isGC ? 'GC' : 'DC', x, isGC ? y - 12 : y + 18);
+  }
+
+  // ── アノテーション: BBバンドブレイク（直近30日）
+  const bbAnnotStart = Math.max(0, n - 30);
+  for (let i = bbAnnotStart; i < n; i++) {
+    if (bb[i].upper === null || closes[i] == null) continue;
+    const x = xOf(i);
+    if (closes[i] > bb[i].upper) {
+      // 上抜け（過熱・注意）→ 赤丸をローソク高値の上に
+      ctx.beginPath();
+      ctx.arc(x, yOf(highs[i]) - 5, 3, 0, Math.PI * 2);
+      ctx.fillStyle = '#ff6666';
+      ctx.fill();
+    } else if (closes[i] < bb[i].lower) {
+      // 下抜け（売られすぎ・反転期待）→ 青丸をローソク安値の下に
+      ctx.beginPath();
+      ctx.arc(x, yOf(lows[i]) + 5, 3, 0, Math.PI * 2);
+      ctx.fillStyle = '#66aaff';
+      ctx.fill();
+    }
+  }
+
   // ── 日付ラベル（最初・中間・最後）
   ctx.fillStyle = '#555';
   ctx.font = `9px Courier New`;
@@ -4642,6 +4686,10 @@ function drawStockChart(hist, indicators) {
       <span style="color:#ffcc44">─ SMA5</span>
       <span style="color:#ff8844">─ SMA25</span>
       <span style="color:rgba(80,140,220,0.8)">▭ BB(20±2σ)</span>
+      <span style="color:#ffd700">▲GC</span>
+      <span style="color:#ff5555">▼DC</span>
+      <span style="color:#ff6666">●過熱</span>
+      <span style="color:#66aaff">●売られ過ぎ</span>
     `;
   }
 }
