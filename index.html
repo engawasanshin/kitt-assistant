@@ -3647,7 +3647,7 @@ async function analyzeFace(dateKey) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           contents: [{ parts: [
-            { text: 'この写真の人物の顔色・体調感を分析してください。血色・肌のツヤ・目の状態・表情から読み取れる体調感を3〜4行で。カジュアルな口調で、あくまで参考情報として話しかけてください。医療診断ではありません。' },
+            { text: 'この写真の人物の顔色・体調感を分析してください。血色・肌のツヤ・目の状態・表情から読み取れる体調感を3〜4行で。カジュアルな口調で、あくまで参考情報として話しかけてください。医療診断ではありません。\n最後に必ず「体調スコア: X/10」（Xは1〜10の整数）の形式で1行追加してください。' },
             { inline_data: { mime_type: 'image/jpeg', data: base64 } }
           ]}],
           generationConfig: { maxOutputTokens: 1024, thinkingConfig: { thinkingBudget: 0 } }
@@ -3666,22 +3666,35 @@ async function analyzeFace(dateKey) {
       addSystemMessage(`⚠️ 顔色診断: 結果を取得できませんでした（理由: ${reason}）`);
       return;
     }
-    addMessage('kitt', `📸 顔色診断（${dateKey}）\n\n${result}`);
+    // AIスコアを抽出
+    const scoreMatch = result.match(/体調スコア[：:]\s*(\d+)\s*\/\s*10/);
+    const aiScore = scoreMatch ? parseInt(scoreMatch[1]) : null;
+    const scoreBar = aiScore !== null ? ` 🤖${aiScore}/10` : '';
+    addMessage('kitt', `📸 顔色診断（${dateKey}）${scoreBar}\n\n${result}`);
     // 分析結果をphotoレコードに保存
     const photos = getFacePhotos();
     if (photos[dateKey]) {
       photos[dateKey].aiAnalysis = result;
       photos[dateKey].analysisDate = new Date().toISOString();
+      if (aiScore !== null) photos[dateKey].aiScore = aiScore;
       localStorage.setItem('kitt_face_photos', JSON.stringify(photos));
     }
-    // コメント＋バイタル入力フォームを表示
+    // AIスコアをhealthLogにも保存
+    if (aiScore !== null) saveHealthEntry(dateKey, 'faceScore', aiScore);
+    // コメント＋主観スコア＋バイタル入力フォームを表示
     addSystemMessageWithHTML(`<div style="font-size:12px;">
   <div class="face-comment-form" style="margin-bottom:10px;">
-    <div style="color:#88aaff;margin-bottom:6px;">📝 今の体調・気分を一言で記録（任意）</div>
+    <div style="color:#88aaff;margin-bottom:6px;">📝 今の体調・気分を記録（任意）</div>
     <input id="fci_${dateKey}" type="text" placeholder="例：少し疲れ気味、すごく元気、など"
-      style="width:100%;background:#0a0a1a;border:1px solid #2a2a6a;color:#e0e0e0;border-radius:4px;padding:6px;font-size:12px;box-sizing:border-box;font-family:'Courier New',monospace;">
-    <button onclick="saveFaceComment('${dateKey}',document.getElementById('fci_${dateKey}').value);this.closest('.face-comment-form').innerHTML='✅ コメントを記録しました'"
-      style="margin-top:6px;background:#1a1a3a;color:#88aaff;border:1px solid #2a2a6a;border-radius:4px;padding:5px 14px;cursor:pointer;font-size:11px;font-family:'Courier New',monospace;width:100%;">
+      style="width:100%;background:#0a0a1a;border:1px solid #2a2a6a;color:#e0e0e0;border-radius:4px;padding:6px;font-size:12px;box-sizing:border-box;font-family:'Courier New',monospace;margin-bottom:8px;">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+      <span style="color:#aaa;font-size:11px;white-space:nowrap;">😊 主観スコア（1〜10）:</span>
+      <input id="fcs_${dateKey}" type="number" min="1" max="10" placeholder="7"
+        style="width:56px;background:#0a0a1a;border:1px solid #2a2a6a;color:#e0e0e0;border-radius:4px;padding:5px;font-size:12px;font-family:'Courier New',monospace;text-align:center;">
+      ${aiScore !== null ? `<span style="color:#666;font-size:11px;">AI客観: 🤖${aiScore}/10</span>` : ''}
+    </div>
+    <button onclick="saveFaceRecord('${dateKey}',document.getElementById('fci_${dateKey}').value,document.getElementById('fcs_${dateKey}').value);this.closest('.face-comment-form').innerHTML='✅ 記録しました'"
+      style="margin-top:2px;background:#1a1a3a;color:#88aaff;border:1px solid #2a2a6a;border-radius:4px;padding:5px 14px;cursor:pointer;font-size:11px;font-family:'Courier New',monospace;width:100%;">
       💾 記録する
     </button>
   </div>
@@ -3692,15 +3705,20 @@ async function analyzeFace(dateKey) {
   }
 }
 
-// 顔色診断コメント保存
-function saveFaceComment(dateKey, comment) {
-  if (!comment || !comment.trim()) return;
+// 顔色診断コメント＋主観スコア保存
+function saveFaceRecord(dateKey, comment, scoreStr) {
   const photos = getFacePhotos();
-  if (photos[dateKey]) {
-    photos[dateKey].userComment = comment.trim();
-    localStorage.setItem('kitt_face_photos', JSON.stringify(photos));
+  if (!photos[dateKey]) return;
+  if (comment && comment.trim()) photos[dateKey].userComment = comment.trim();
+  const subScore = parseInt(scoreStr);
+  if (!isNaN(subScore) && subScore >= 1 && subScore <= 10) {
+    photos[dateKey].subjectiveScore = subScore;
+    saveHealthEntry(dateKey, 'subjectiveScore', subScore);
   }
+  localStorage.setItem('kitt_face_photos', JSON.stringify(photos));
 }
+// 後方互換（旧コードから呼ばれる場合）
+function saveFaceComment(dateKey, comment) { saveFaceRecord(dateKey, comment, ''); }
 
 // 顔写真グリッド表示（タップで再診断）
 function showFacePhotoGrid() {
@@ -3755,11 +3773,19 @@ function showHealthTimeline() {
         vitalStr += `${param.icon}${vitals[param.key]}${param.unit} `;
       }
     }
+    const aiScore = p.aiScore != null ? p.aiScore : (vitals.faceScore != null ? vitals.faceScore : null);
+    const subScore = p.subjectiveScore != null ? p.subjectiveScore : (vitals.subjectiveScore != null ? vitals.subjectiveScore : null);
+    const scoreStr = (aiScore != null || subScore != null)
+      ? `<div style="display:flex;gap:8px;margin-bottom:3px;">
+          ${aiScore != null ? `<span style="font-size:11px;color:#88aacc;">🤖 AI: ${aiScore}/10</span>` : ''}
+          ${subScore != null ? `<span style="font-size:11px;color:#88cc88;">😊 主観: ${subScore}/10</span>` : ''}
+        </div>` : '';
     html += `<div style="display:flex;gap:10px;margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid #222;">
       <img src="${p.dataUrl}" onclick="analyzeFace('${k}')" style="width:56px;height:56px;object-fit:cover;border-radius:6px;border:1px solid #2a4a2a;flex-shrink:0;cursor:pointer;">
       <div style="flex:1;min-width:0;">
         <div style="color:#88aaff;font-size:11px;margin-bottom:3px;">📅 ${dateLabel}</div>
-        ${p.userComment ? `<div style="color:#88cc88;margin-bottom:3px;">💬 ${escapeHtml(p.userComment)}</div>` : ''}
+        ${scoreStr}
+        ${p.userComment ? `<div style="color:#88cc88;font-size:11px;margin-bottom:3px;">💬 ${escapeHtml(p.userComment)}</div>` : ''}
         ${vitalStr ? `<div style="color:#aaa;font-size:11px;margin-bottom:3px;">${vitalStr}</div>` : ''}
         ${excerpt ? `<div style="color:#888;font-size:11px;line-height:1.4;">${escapeHtml(excerpt)}</div>` : ''}
         ${!p.aiAnalysis ? `<button onclick="analyzeFace('${k}')" style="background:#1a1a3a;color:#88aaff;border:1px solid #2a2a6a;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:10px;font-family:'Courier New',monospace;">🔍 診断する</button>` : ''}
