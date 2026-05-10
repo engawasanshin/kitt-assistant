@@ -1828,6 +1828,7 @@ async function sendMessage() {
      ((_lc.includes('グラフ') || _lc.includes('チャート')) && /見せて|描いて|表示して/.test(_lc)) ||
      (_hasKnownStock && _lc.includes('分析') && /みせて|見せて|表示して/.test(_lc))) ||
     /顔写真|顔を撮|selfie/.test(_lc) ||
+    /健康記録|顔色.*記録|顔色.*履歴|健康.*タイムライン|健康.*履歴/.test(_lc) ||
     /体重グラフ|体重.*推移|体重.*見せて|体重.*記録/.test(_lc) ||
     /今日の天気|天気.*教えて|天気.*どう|天気は/.test(_lc) ||
     /為替|ドル円|元円|(?:^|[\s。、])レート/.test(_lc) ||
@@ -3665,17 +3666,44 @@ async function analyzeFace(dateKey) {
       return;
     }
     addMessage('kitt', `📸 顔色診断（${dateKey}）\n\n${result}`);
+    // 分析結果をphotoレコードに保存
+    const photos = getFacePhotos();
+    if (photos[dateKey]) {
+      photos[dateKey].aiAnalysis = result;
+      photos[dateKey].analysisDate = new Date().toISOString();
+      localStorage.setItem('kitt_face_photos', JSON.stringify(photos));
+    }
+    // コメント入力フォームを表示
+    addSystemMessageWithHTML(`<div class="face-comment-form" style="font-size:12px;">
+  <div style="color:#88aaff;margin-bottom:6px;">📝 今の体調・気分を一言で記録（任意）</div>
+  <input id="fci_${dateKey}" type="text" placeholder="例：少し疲れ気味、すごく元気、など"
+    style="width:100%;background:#0a0a1a;border:1px solid #2a2a6a;color:#e0e0e0;border-radius:4px;padding:6px;font-size:12px;box-sizing:border-box;font-family:'Courier New',monospace;">
+  <button onclick="saveFaceComment('${dateKey}',document.getElementById('fci_${dateKey}').value);this.closest('.face-comment-form').innerHTML='✅ コメントを記録しました'"
+    style="margin-top:6px;background:#1a1a3a;color:#88aaff;border:1px solid #2a2a6a;border-radius:4px;padding:5px 14px;cursor:pointer;font-size:11px;font-family:'Courier New',monospace;width:100%;">
+    💾 記録する
+  </button>
+</div>`);
   } catch(e) {
     addSystemMessage(`⚠️ 顔色診断エラー: ${e.message}`);
   }
 }
 
-// 顔写真グリッド表示
+// 顔色診断コメント保存
+function saveFaceComment(dateKey, comment) {
+  if (!comment || !comment.trim()) return;
+  const photos = getFacePhotos();
+  if (photos[dateKey]) {
+    photos[dateKey].userComment = comment.trim();
+    localStorage.setItem('kitt_face_photos', JSON.stringify(photos));
+  }
+}
+
+// 顔写真グリッド表示（タップで再診断）
 function showFacePhotoGrid() {
   const photos = getFacePhotos();
   const keys = Object.keys(photos).sort().reverse().slice(0, 12);
   if (keys.length === 0) {
-    addMessage('assistant', '📸 顔写真がまだありません。「顔写真を撮る」と話しかけてください。');
+    addMessage('kitt', '📸 顔写真がまだありません。「顔写真を撮る」と話しかけてください。');
     return;
   }
   let html = '<div style="font-size:12px;"><div style="color:#88aaff;font-weight:bold;margin-bottom:8px;">📸 顔写真一覧（最新12枚）</div>';
@@ -3683,12 +3711,46 @@ function showFacePhotoGrid() {
   keys.forEach(k => {
     const d = new Date(k);
     const label = `${d.getMonth()+1}/${d.getDate()}`;
+    const hasAnalysis = !!photos[k].aiAnalysis;
     html += `<div style="text-align:center;" onclick="analyzeFace('${k}')">
-      <img src="${photos[k].dataUrl}" style="width:72px;height:72px;object-fit:cover;border-radius:6px;border:1px solid #333;display:block;cursor:pointer;">
-      <span style="font-size:9px;color:#666;">${label}</span>
+      <img src="${photos[k].dataUrl}" style="width:72px;height:72px;object-fit:cover;border-radius:6px;border:1px solid ${hasAnalysis ? '#2a4a2a' : '#333'};display:block;cursor:pointer;">
+      <span style="font-size:9px;color:${hasAnalysis ? '#66aa66' : '#666'};">${label}${hasAnalysis ? '✓' : ''}</span>
     </div>`;
   });
-  html += '</div><div style="color:#555;font-size:10px;margin-top:6px;">📌 写真タップ → AIで顔色診断</div></div>';
+  html += '</div><div style="color:#555;font-size:10px;margin-top:6px;">📌 写真タップ → AIで顔色診断 / ✓=診断済み</div></div>';
+  addSystemMessageWithHTML(html);
+}
+
+// 健康記録タイムライン（写真＋診断結果＋コメントをセットで表示）
+function showHealthTimeline() {
+  const photos = getFacePhotos();
+  const keys = Object.keys(photos).sort().reverse().slice(0, 30);
+  if (keys.length === 0) {
+    addMessage('kitt', '📸 顔写真がまだありません。「顔写真を撮る」と話しかけてください。');
+    return;
+  }
+  const withData = keys.filter(k => photos[k].aiAnalysis || photos[k].userComment);
+  if (withData.length === 0) {
+    addMessage('kitt', '📊 まだ診断結果のある記録がありません。「顔写真を撮って」→「AIで顔色診断する」を試してください。');
+    return;
+  }
+  let html = `<div style="font-size:12px;"><div style="color:#88aaff;font-weight:bold;margin-bottom:10px;">🏥 健康記録タイムライン（${withData.length}件）</div>`;
+  withData.forEach(k => {
+    const p = photos[k];
+    const d = new Date(k);
+    const dateLabel = `${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()}`;
+    const excerpt = p.aiAnalysis ? (p.aiAnalysis.length > 60 ? p.aiAnalysis.slice(0, 60) + '…' : p.aiAnalysis) : '';
+    html += `<div style="display:flex;gap:10px;margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid #222;">
+      <img src="${p.dataUrl}" onclick="analyzeFace('${k}')" style="width:56px;height:56px;object-fit:cover;border-radius:6px;border:1px solid #2a4a2a;flex-shrink:0;cursor:pointer;">
+      <div style="flex:1;min-width:0;">
+        <div style="color:#88aaff;font-size:11px;margin-bottom:3px;">📅 ${dateLabel}</div>
+        ${p.userComment ? `<div style="color:#88cc88;margin-bottom:3px;">💬 ${escapeHtml(p.userComment)}</div>` : ''}
+        ${excerpt ? `<div style="color:#888;font-size:11px;line-height:1.4;">${escapeHtml(excerpt)}</div>` : ''}
+        ${!p.aiAnalysis ? `<button onclick="analyzeFace('${k}')" style="background:#1a1a3a;color:#88aaff;border:1px solid #2a2a6a;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:10px;font-family:'Courier New',monospace;">🔍 診断する</button>` : ''}
+      </div>
+    </div>`;
+  });
+  html += '</div>';
   addSystemMessageWithHTML(html);
 }
 
@@ -4233,7 +4295,8 @@ function showCommandList() {
   <div style="color:#aaa;padding-left:8px;">
     「<span style="color:#fff;">顔写真を撮る</span>」→ カメラ起動→撮影→保存<br>
     「<span style="color:#fff;">顔写真を見せて</span>」→ 最近12枚のグリッド表示<br>
-    写真タップ → 🔍 AIで顔色診断<br>
+    写真タップ → 🔍 AIで顔色診断 → 💬 主観コメントを記録<br>
+    「<span style="color:#fff;">健康記録</span>」→ 写真＋診断＋コメントのタイムライン<br>
     「<span style="color:#fff;">体調は8点</span>」「<span style="color:#fff;">調子は7/10</span>」→ 体調スコアを記録
   </div>
 
@@ -7598,6 +7661,12 @@ function analyzeAndRecord(text) {
   }
 
   // === 日々の記録 Phase 3: 体調スコア・顔写真 ===
+
+  // 健康記録タイムライン
+  if (/健康記録|顔色.*記録|顔色.*履歴|健康.*タイムライン|健康.*履歴/.test(lowerText)) {
+    showHealthTimeline();
+    return;
+  }
 
   // 顔写真
   if (/顔写真|顔を撮|selfie/.test(lowerText)) {
