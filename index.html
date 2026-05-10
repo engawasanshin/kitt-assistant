@@ -635,7 +635,7 @@ body {
   <!-- 折りたたみ可能な本体 -->
   <div id="watchlistBody" style="display: none; padding: 0 12px 8px;">
     <div style="display: flex; justify-content: flex-end; margin-bottom: 6px;">
-      <button onclick="handleUpdateWatchlist()" style="font-size: 10px; padding: 4px 8px; border: none; background: #ff2200; color: #fff; border-radius: 4px; cursor: pointer;">🔄 更新</button>
+      <button id="watchlistUpdateBtn" onclick="handleUpdateWatchlist()" style="font-size: 10px; padding: 4px 8px; border: none; background: #ff2200; color: #fff; border-radius: 4px; cursor: pointer;">🔄 更新</button>
     </div>
     <div id="watchlistStats" style="font-size: 11px; color: #aaa; margin-bottom: 6px;"></div>
     <div id="watchlistContent" style="font-size: 13px; color: #ccc; line-height: 1.6; max-height: 220px; overflow-y: auto; overflow-x: hidden; padding-right: 4px;"></div>
@@ -1673,7 +1673,7 @@ window.addEventListener('load', async () => {
     addSystemMessage('APIキーを設定してください（右上の歯車アイコン）');
   } else {
     if (chatHistory.length === 0) {
-      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-05-06a / bugfix]');
+      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-05-07a / bugfix]');
     } else {
       restoreHistory();
     }
@@ -1823,9 +1823,7 @@ async function sendMessage() {
     /気分グラフ|気分の推移|気分チャート|気分を見せて/.test(_lc) ||
     (/先週|今週の記録|今週何した|先週何してた|週次サマリー|週のまとめ/.test(_lc) && /記録|何した|振り返り|まとめ|サマリー/.test(_lc)) ||
     /先月の記録|先月何してた|月次サマリー/.test(_lc) ||
-    ((_lc.includes('テクニカル') && /分析して|見せて|お願い|チェックして/.test(_lc)) ||
-     ((_lc.includes('移動平均') || _lc.includes('ボリンジャー')) && /見せて|表示して|分析して/.test(_lc)) ||
-     ((_lc.includes('グラフ') || _lc.includes('チャート')) && /見せて|描いて|表示して/.test(_lc))) ||
+    // ※テクニカル分析・チャート系はGeminiに流してコメントも返す（_isLocalCmdから除外）
     /顔写真|顔を撮|selfie/.test(_lc) ||
     /体重グラフ|体重.*推移|体重.*見せて|体重.*記録/.test(_lc) ||
     /今日の天気|天気.*教えて|天気.*どう|天気は/.test(_lc) ||
@@ -2253,7 +2251,7 @@ async function saveSettings() {
 
   closeSettings();
   if (chatHistory.length === 0 && apiKey) {
-    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-05-06a / bugfix]');
+    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-05-07a / bugfix]');
   }
 }
 
@@ -2776,17 +2774,45 @@ function displayWatchlist(watchlist) {
   }
 }
 
-async function handleUpdateWatchlist() {
+let _watchlistUpdateInProgress = false;
+
+async function handleUpdateWatchlist(forceUpdate = false) {
+  // 連打防止: 処理中なら何もしない
+  if (_watchlistUpdateInProgress) {
+    addSystemMessage('⏳ 更新中です。しばらくお待ちください...');
+    return;
+  }
+
+  // キャッシュ有効チェック（全銘柄が6時間以内に更新済みなら確認）
+  if (!forceUpdate) {
+    const cache = JSON.parse(localStorage.getItem('kitt_investment_price_cache') || '{}');
+    const now = new Date();
+    const watchlist = getWatchlist();
+    const allCached = watchlist.length > 0 && watchlist.every(item => {
+      const ts = cache[item.ticker] ? new Date(cache[item.ticker].timestamp) : null;
+      return ts && (now - ts) / (1000 * 60 * 60) < 6;
+    });
+    if (allCached) {
+      if (!confirm('全銘柄は6時間以内に更新済みです。強制的に再取得しますか？')) return;
+      // 強制更新: キャッシュをクリアしてから実行
+      localStorage.removeItem('kitt_investment_price_cache');
+    }
+  }
+
+  const btn = document.getElementById('watchlistUpdateBtn');
+  _watchlistUpdateInProgress = true;
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ 更新中...'; }
+
   try {
     addSystemMessage('📊 ウォッチリストを更新中...');
-
     const result = await updateWatchlist();
     addSystemMessage(`✅ ${result.message}`);
-
-    // ダッシュボード再描画
     setTimeout(updateDashboard, 500);
   } catch (err) {
     addSystemMessage(`❌ 更新エラー: ${err.message}`);
+  } finally {
+    _watchlistUpdateInProgress = false;
+    if (btn) { btn.disabled = false; btn.textContent = '🔄 更新'; }
   }
 }
 
