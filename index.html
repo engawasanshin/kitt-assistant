@@ -137,7 +137,7 @@ body {
   color: #88cc88;
 }
 
-.message.kitt {
+.message.kitt, .message.assistant {
   align-self: flex-start;
   background: #1a1111;
   border: 1px solid #3a1515;
@@ -153,7 +153,7 @@ body {
   text-align: center;
 }
 
-.message.kitt .label, .message.user .label {
+.message.kitt .label, .message.assistant .label, .message.user .label {
   font-size: 11px;
   opacity: 0.6;
   margin-bottom: 4px;
@@ -1823,7 +1823,10 @@ async function sendMessage() {
     /気分グラフ|気分の推移|気分チャート|気分を見せて/.test(_lc) ||
     (/先週|今週の記録|今週何した|先週何してた|週次サマリー|週のまとめ/.test(_lc) && /記録|何した|振り返り|まとめ|サマリー/.test(_lc)) ||
     /先月の記録|先月何してた|月次サマリー/.test(_lc) ||
-    // ※テクニカル分析・チャート系はGeminiに流してコメントも返す（_isLocalCmdから除外）
+    ((_lc.includes('テクニカル') && /分析して|見せて|お願い|チェックして/.test(_lc)) ||
+     ((_lc.includes('移動平均') || _lc.includes('ボリンジャー')) && /見せて|表示して|分析して/.test(_lc)) ||
+     ((_lc.includes('グラフ') || _lc.includes('チャート')) && /見せて|描いて|表示して/.test(_lc)) ||
+     (_hasKnownStock && _lc.includes('分析') && /みせて|見せて|表示して/.test(_lc))) ||
     /顔写真|顔を撮|selfie/.test(_lc) ||
     /体重グラフ|体重.*推移|体重.*見せて|体重.*記録/.test(_lc) ||
     /今日の天気|天気.*教えて|天気.*どう|天気は/.test(_lc) ||
@@ -3650,8 +3653,18 @@ async function analyzeFace(dateKey) {
       }
     );
     const json = await res.json();
-    const result = json.candidates?.[0]?.content?.parts?.[0]?.text || '分析できませんでした。';
-    addMessage('assistant', `📸 顔色診断（${dateKey}）\n\n${result}`);
+    if (!res.ok) {
+      const errMsg = json.error?.message || `HTTPエラー ${res.status}`;
+      addSystemMessage(`⚠️ 顔色診断APIエラー: ${errMsg}`);
+      return;
+    }
+    const result = json.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!result) {
+      const reason = json.candidates?.[0]?.finishReason || json.promptFeedback?.blockReason || '不明';
+      addSystemMessage(`⚠️ 顔色診断: 結果を取得できませんでした（理由: ${reason}）`);
+      return;
+    }
+    addMessage('kitt', `📸 顔色診断（${dateKey}）\n\n${result}`);
   } catch(e) {
     addSystemMessage(`⚠️ 顔色診断エラー: ${e.message}`);
   }
@@ -6966,7 +6979,7 @@ function analyzeAndRecord(text) {
         if (_naturalAddIntent && !_explicitAddIntent) {
           // 自然な言い方の場合はKITTから一言
           setTimeout(() => {
-            addMessage('assistant', `📋 ${added.map(n => n.split('（')[0]).join('・')}をウォッチリストに追加しました！価格が更新されたら通知しますね。チャートで確認したい時は「〇〇のチャート見せて」と話しかけてください。`);
+            addMessage('kitt', `📋 ${added.map(n => n.split('（')[0]).join('・')}をウォッチリストに追加しました！価格が更新されたら通知しますね。チャートで確認したい時は「〇〇のチャート見せて」と話しかけてください。`);
           }, 300);
         }
         setTimeout(updateDashboard, 300);
