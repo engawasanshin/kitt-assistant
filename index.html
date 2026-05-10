@@ -1840,6 +1840,11 @@ async function sendMessage() {
     /リマインダー|リマインド/.test(_lc) ||
     /メモ.*見せて|メモ.*一覧|今日のメモ|メモ.*確認|メモ.*エクスポート/.test(_lc) ||
     /中国語|フレーズ|緊急連絡先|中国.*連絡|大使館/.test(_lc) ||
+    /プロジェクト.*作|プロジェクト.*開始|新規プロジェクト/.test(_lc) ||
+    /プロジェクト.*一覧|プロジェクト.*見せて|プロジェクト.*確認/.test(_lc) ||
+    (/の資料|のファイル|のデータ/.test(_lc) && /見せて|確認|一覧/.test(_lc)) ||
+    (/に資料|にファイル|にデータ|に追加/.test(_lc) && /追加|入れて|保存/.test(_lc)) ||
+    (/プロジェクト/.test(_lc) && /エクスポート|ダウンロード/.test(_lc)) ||
     _naturalAdd ||
     _isNewsQuery
     // ※_isStockQueryはGeminiに流す（会話できるよう）。ウォッチリストはanalyzeAndRecordで自動表示
@@ -6936,6 +6941,43 @@ function exportMemosJSON() {
 function analyzeAndRecord(text) {
   const lowerText = text.toLowerCase();
 
+  // === プロジェクト管理コマンド ===
+  // 「車修理プロジェクトを作って」
+  const _projCreate = /^(.+?)(?:プロジェクト|project).*(?:作って|作る|開始|始めて|登録)/i.exec(text);
+  if (_projCreate) {
+    const name = _projCreate[1].trim();
+    createProject(name).then(id => {
+      if (id !== null) {
+        addMessage('kitt', `📂 プロジェクト「${name}」を作成しました！\nファイルを追加するには下のフォームか「${name}にファイルを追加して」と話しかけてください。`);
+        showFileUploadUI(name);
+      }
+    }).catch(e => addSystemMessage(`⚠️ プロジェクト作成エラー: ${e.message}`));
+    return;
+  }
+  // 「プロジェクト一覧」
+  if (/プロジェクト.*(?:一覧|見せて|確認)/.test(lowerText)) {
+    showProjectList();
+    return;
+  }
+  // 「車修理の資料を見せて」
+  const _projView = /^(.+?)(?:の資料|のファイル|のデータ).*(?:見せて|確認|一覧)/i.exec(text);
+  if (_projView) {
+    showProjectFiles(_projView[1].trim());
+    return;
+  }
+  // 「車修理にファイルを追加して」
+  const _projAdd = /^(.+?)(?:に資料|にファイル|にデータ|に追加)/i.exec(text);
+  if (_projAdd && /追加|入れて|保存/.test(lowerText)) {
+    showFileUploadUI(_projAdd[1].trim());
+    return;
+  }
+  // 「車修理をエクスポートして」
+  const _projExport = /^(.+?)(?:を|の)(?:エクスポート|ダウンロード)/i.exec(text);
+  if (_projExport && /プロジェクト|資料|ファイル/.test(lowerText)) {
+    exportProjectForClaudeCode(_projExport[1].trim());
+    return;
+  }
+
   // === イベント日時の自動検出・記録 ===
   const detectedEvents = detectCompletedEvents(text);
   if (detectedEvents.length > 0) {
@@ -8645,6 +8687,9 @@ document.addEventListener('DOMContentLoaded', () => {
     _sb.style.background = '#1a0000';
   }
 
+  // プロジェクトDB初期化
+  initProjectDB().catch(e => console.warn('[KITT] ProjectDB init error:', e));
+
   // リマインダー: 起動時に期日チェック
   checkDueReminders();
 
@@ -8671,6 +8716,240 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // メッセージ送信時の更新は、sendMessage関数内で直接呼び出すように変更
+
+// ============================================================
+// 📁 プロジェクト管理システム（IndexedDB）
+// ============================================================
+// 使い方:
+//   「車修理プロジェクトを作って」→ createProject
+//   「車修理にファイルを追加して」→ showFileUploadUI
+//   「車修理の資料を見せて」→ showProjectFiles
+//   「プロジェクト一覧」→ showProjectList
+//   「車修理をエクスポートして」→ exportProjectForClaudeCode
+
+let _projectDB = null;
+
+async function initProjectDB() {
+  if (_projectDB) return;
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open('kitt_project_db', 1);
+    req.onupgradeneeded = e => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains('projects')) {
+        const ps = db.createObjectStore('projects', { keyPath: 'id', autoIncrement: true });
+        ps.createIndex('name', 'name', { unique: false });
+      }
+      if (!db.objectStoreNames.contains('project_files')) {
+        const fs = db.createObjectStore('project_files', { keyPath: 'id', autoIncrement: true });
+        fs.createIndex('projectName', 'projectName', { unique: false });
+      }
+    };
+    req.onsuccess = e => { _projectDB = e.target.result; resolve(); };
+    req.onerror = e => reject(e.target.error);
+  });
+}
+
+async function createProject(name, description = '') {
+  await initProjectDB();
+  // 重複チェック
+  const existing = await getProjects();
+  if (existing.some(p => p.name === name)) {
+    addSystemMessage(`📂 プロジェクト「${name}」はすでに存在します。`);
+    showProjectFiles(name);
+    return null;
+  }
+  return new Promise((resolve, reject) => {
+    const tx = _projectDB.transaction('projects', 'readwrite');
+    const req = tx.objectStore('projects').add({ name, description, createdAt: new Date().toISOString() });
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = e => reject(e.target.error);
+  });
+}
+
+async function getProjects() {
+  await initProjectDB();
+  return new Promise((resolve, reject) => {
+    const tx = _projectDB.transaction('projects', 'readonly');
+    const req = tx.objectStore('projects').getAll();
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = e => reject(e.target.error);
+  });
+}
+
+async function deleteProject(id) {
+  await initProjectDB();
+  return new Promise((resolve, reject) => {
+    const tx = _projectDB.transaction('projects', 'readwrite');
+    tx.objectStore('projects').delete(id);
+    tx.oncomplete = resolve;
+    tx.onerror = e => reject(e.target.error);
+  });
+}
+
+async function saveProjectFile(projectName, file, memo = '') {
+  await initProjectDB();
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      const tx = _projectDB.transaction('project_files', 'readwrite');
+      const req = tx.objectStore('project_files').add({
+        projectName,
+        fileName: file.name,
+        fileType: file.type || 'application/octet-stream',
+        fileSize: file.size,
+        data: e.target.result,
+        memo,
+        createdAt: new Date().toISOString()
+      });
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = err => reject(err.target.error);
+    };
+    reader.onerror = () => reject(new Error('ファイル読み込みエラー'));
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+async function getProjectFiles(projectName) {
+  await initProjectDB();
+  return new Promise((resolve, reject) => {
+    const tx = _projectDB.transaction('project_files', 'readonly');
+    const req = tx.objectStore('project_files').index('projectName').getAll(projectName);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = e => reject(e.target.error);
+  });
+}
+
+async function deleteProjectFile(id) {
+  await initProjectDB();
+  return new Promise((resolve, reject) => {
+    const tx = _projectDB.transaction('project_files', 'readwrite');
+    const req = tx.objectStore('project_files').delete(id);
+    req.onsuccess = resolve;
+    req.onerror = e => reject(e.target.error);
+  });
+}
+
+async function downloadProjectFile(id, fileName, fileType) {
+  await initProjectDB();
+  const tx = _projectDB.transaction('project_files', 'readonly');
+  const req = tx.objectStore('project_files').get(id);
+  req.onsuccess = () => {
+    const f = req.result;
+    if (!f) return;
+    const blob = new Blob([f.data], { type: fileType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = fileName; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 3000);
+  };
+}
+
+// プロジェクト一覧表示
+async function showProjectList() {
+  const projects = await getProjects();
+  if (projects.length === 0) {
+    addSystemMessage('📁 プロジェクトはまだありません。\n「〇〇プロジェクトを作って」と話しかけてください。');
+    return;
+  }
+  let html = `<div style="font-size:12px;"><div style="color:#88aaff;font-weight:bold;margin-bottom:10px;">📁 プロジェクト一覧（${projects.length}件）</div>`;
+  for (const p of projects) {
+    const files = await getProjectFiles(p.name);
+    const d = new Date(p.createdAt);
+    const dateStr = `${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()}`;
+    html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #1a1a1a;">
+      <div style="min-width:0;flex:1;">
+        <div style="color:#e0e0e0;">📂 ${escapeHtml(p.name)}</div>
+        ${p.description ? `<div style="color:#888;font-size:10px;">${escapeHtml(p.description)}</div>` : ''}
+        <div style="color:#555;font-size:10px;">作成: ${dateStr} / ファイル: ${files.length}件</div>
+      </div>
+      <div style="display:flex;gap:5px;flex-shrink:0;">
+        <button onclick="showProjectFiles('${escapeHtml(p.name)}')" style="background:#1a1a3a;color:#88aaff;border:1px solid #2a2a6a;border-radius:4px;padding:3px 8px;cursor:pointer;font-size:10px;font-family:'Courier New',monospace;">📋</button>
+        <button onclick="showFileUploadUI('${escapeHtml(p.name)}')" style="background:#1a3a1a;color:#88cc88;border:1px solid #2a6a2a;border-radius:4px;padding:3px 8px;cursor:pointer;font-size:10px;font-family:'Courier New',monospace;">📎</button>
+        <button onclick="deleteProject(${p.id}).then(showProjectList)" style="background:#1a0000;color:#cc4444;border:1px solid #4a1a1a;border-radius:4px;padding:3px 8px;cursor:pointer;font-size:10px;font-family:'Courier New',monospace;">✕</button>
+      </div>
+    </div>`;
+  }
+  html += '</div>';
+  addSystemMessageWithHTML(html);
+}
+
+// プロジェクトファイル一覧表示
+async function showProjectFiles(projectName) {
+  const files = await getProjectFiles(projectName);
+  const esc = escapeHtml(projectName);
+  if (files.length === 0) {
+    addSystemMessageWithHTML(`<div style="font-size:12px;">
+      <div style="color:#88aaff;font-weight:bold;margin-bottom:8px;">📂 ${esc}（ファイルなし）</div>
+      <button onclick="showFileUploadUI('${esc}')" style="background:#1a3a1a;color:#88cc88;border:1px solid #2a6a2a;border-radius:4px;padding:5px 14px;cursor:pointer;font-size:11px;font-family:'Courier New',monospace;">📎 ファイルを追加する</button>
+    </div>`);
+    return;
+  }
+  let html = `<div style="font-size:12px;">
+    <div style="color:#88aaff;font-weight:bold;margin-bottom:8px;">📂 ${esc}（${files.length}件）</div>`;
+  for (const f of files) {
+    const d = new Date(f.createdAt);
+    const dateStr = `${d.getMonth()+1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2,'0')}`;
+    const sizeStr = f.fileSize > 1024*1024 ? `${(f.fileSize/1024/1024).toFixed(1)}MB` : `${Math.round(f.fileSize/1024)}KB`;
+    const icon = f.fileType.includes('pdf') ? '📄' : f.fileType.startsWith('image') ? '🖼️' : '📎';
+    html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid #1a1a1a;">
+      <div style="min-width:0;flex:1;">
+        <div style="color:#e0e0e0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${icon} ${escapeHtml(f.fileName)}</div>
+        ${f.memo ? `<div style="color:#88cc88;font-size:10px;">💬 ${escapeHtml(f.memo)}</div>` : ''}
+        <div style="color:#555;font-size:10px;">${dateStr} / ${sizeStr}</div>
+      </div>
+      <div style="display:flex;gap:4px;flex-shrink:0;margin-left:8px;">
+        <button onclick="downloadProjectFile(${f.id},'${escapeHtml(f.fileName)}','${f.fileType}')" style="background:#1a1a3a;color:#88aaff;border:1px solid #2a2a6a;border-radius:4px;padding:3px 8px;cursor:pointer;font-size:10px;font-family:'Courier New',monospace;">⬇</button>
+        <button onclick="deleteProjectFile(${f.id}).then(()=>showProjectFiles('${esc}'))" style="background:#1a0000;color:#cc4444;border:1px solid #4a1a1a;border-radius:4px;padding:3px 8px;cursor:pointer;font-size:10px;font-family:'Courier New',monospace;">✕</button>
+      </div>
+    </div>`;
+  }
+  html += `<div style="display:flex;gap:6px;margin-top:8px;">
+    <button onclick="showFileUploadUI('${esc}')" style="flex:1;background:#1a3a1a;color:#88cc88;border:1px solid #2a6a2a;border-radius:4px;padding:5px;cursor:pointer;font-size:11px;font-family:'Courier New',monospace;">📎 追加</button>
+    <button onclick="exportProjectForClaudeCode('${esc}')" style="flex:1;background:#1a1a3a;color:#88aaff;border:1px solid #2a2a6a;border-radius:4px;padding:5px;cursor:pointer;font-size:11px;font-family:'Courier New',monospace;">⬇️ 全部DL</button>
+  </div></div>`;
+  addSystemMessageWithHTML(html);
+}
+
+// ファイルアップロードフォーム表示
+function showFileUploadUI(projectName) {
+  const esc = escapeHtml(projectName);
+  addSystemMessageWithHTML(`<div class="proj-upload-form" style="font-size:12px;">
+    <div style="color:#88cc88;font-weight:bold;margin-bottom:8px;">📎 「${esc}」にファイルを追加</div>
+    <input type="file" id="pfu_file" multiple
+      style="width:100%;background:#0a0a1a;border:1px solid #2a6a2a;color:#e0e0e0;border-radius:4px;padding:6px;font-size:11px;box-sizing:border-box;font-family:'Courier New',monospace;margin-bottom:8px;">
+    <input id="pfu_memo" type="text" placeholder="メモ（任意）：見積もり 2026-05、取扱説明書 など"
+      style="width:100%;background:#0a0a1a;border:1px solid #2a2a6a;color:#e0e0e0;border-radius:4px;padding:6px;font-size:11px;box-sizing:border-box;font-family:'Courier New',monospace;margin-bottom:8px;">
+    <button onclick="uploadProjectFiles('${esc}')" style="background:#1a3a1a;color:#88cc88;border:1px solid #2a6a2a;border-radius:4px;padding:5px 14px;cursor:pointer;font-size:11px;font-family:'Courier New',monospace;width:100%;">
+      💾 保存する
+    </button>
+  </div>`);
+}
+
+async function uploadProjectFiles(projectName) {
+  const input = document.getElementById('pfu_file');
+  const memo = (document.getElementById('pfu_memo')?.value || '').trim();
+  if (!input || !input.files.length) { addSystemMessage('⚠️ ファイルを選択してください。'); return; }
+  const files = Array.from(input.files);
+  addSystemMessage(`📎 ${files.length}件を保存中...`);
+  let saved = 0;
+  for (const f of files) {
+    try { await saveProjectFile(projectName, f, memo); saved++; }
+    catch(e) { addSystemMessage(`⚠️ ${f.name}: ${e.message}`); }
+  }
+  const form = document.querySelector('.proj-upload-form');
+  if (form) form.innerHTML = `<span style="color:#88cc88;">✅ ${saved}件を「${escapeHtml(projectName)}」に保存しました</span>`;
+}
+
+async function exportProjectForClaudeCode(projectName) {
+  const files = await getProjectFiles(projectName);
+  if (!files.length) { addSystemMessage(`📂 「${projectName}」にファイルがありません。`); return; }
+  addSystemMessage(`⬇️ 「${projectName}」の${files.length}件をダウンロード中...`);
+  for (const f of files) {
+    downloadProjectFile(f.id, f.fileName, f.fileType);
+    await new Promise(r => setTimeout(r, 400));
+  }
+  addSystemMessage(`✅ ダウンロード完了。\nClaude Codeに「${projectName}フォルダを作って整理して」と依頼してください。`);
+}
 </script>
 
 <!-- ===== Phase 4: チャートモーダル ===== -->
