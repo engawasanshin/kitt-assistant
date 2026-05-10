@@ -719,13 +719,14 @@ GPS記録後にメモを追加できるようになった。
 2. 低 **予定表連携（Google Calendar）** - 朝の予定リマインドに活用
 
 **動作確認待ち（修正済みだが未テスト）**
-- Bug#11副作用修正: チャートコマンドを_isLocalCmdに戻した（5/10修正）
 - Bug#12: テクニカル分析トークン上限切断（5/10修正）
-- 顔色診断修正: addMessage role + エラーハンドリング改善（5/10修正）
+- 顔色診断: コメント切れ修正（5/10修正・commit 085be8a）
 
 ---
 
 ### 最終更新
+2026-05-10 (10): Claude Code - 顔色診断コメント切れ修正: maxOutputTokens 300→1024 + thinkingBudget:0（gemini-2.5-flashのthinkingを無効化）。commit 085be8a。
+2026-05-10 (9): Claude Code - 顔色診断モデルエラー修正: gemini-2.0-flash→GEMINI_MODEL(gemini-2.5-flash)。エラー「This model is no longer available to new users」。commit 8702efd。Bug#11修正動作確認済み（11:39「inpexのチャート見せて」→チャートのみ表示・架空分析なし。塩川さん「素晴らしい治ってます」確認）。
 2026-05-10 (8): Claude Code - Bug#11追加修正: 「INPEXの分析みせて」パターン（stock+分析+みせて）が_isLocalCmdに漏れていた → `(_hasKnownStock && _lc.includes('分析') && /みせて|見せて|表示して/.test(_lc))`を追加。ログ11:22処理。
 2026-05-10 (7): Claude Code - 3件修正。①顔色診断バグ: addMessage('assistant')→CSS `.message.assistant`未定義でバブルなし表示。CSS追加＋analyzeFace内でaddMessage('kitt')に変更＋APIエラー詳細表示追加（res.ok・finishReason確認）。②Bug#11副作用修正: チャートコマンドを_isLocalCmdに戻す。③同じaddMessage('assistant')バブル未表示をanalyzeAndRecordのウォッチリスト追加メッセージでも修正。
 2026-05-10 (6): Claude Code - チャートアノテーション実装・動作確認済み（commit 54aa4d6）。▲GC（金三角）・▼DC（赤三角）・BB上抜け赤丸・BB下抜け青丸。塩川さん「やばい、DCが確認できました。超いいです」と即日確認。
