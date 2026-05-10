@@ -3648,8 +3648,7 @@ async function analyzeFace(dateKey) {
             { text: 'この写真の人物の顔色・体調感を分析してください。血色・肌のツヤ・目の状態・表情から読み取れる体調感を3〜4行で。カジュアルな口調で、あくまで参考情報として話しかけてください。医療診断ではありません。' },
             { inline_data: { mime_type: 'image/jpeg', data: base64 } }
           ]}],
-          generationConfig: { maxOutputTokens: 1024 },
-          thinkingConfig: { thinkingBudget: 0 }
+          generationConfig: { maxOutputTokens: 1024, thinkingConfig: { thinkingBudget: 0 } }
         })
       }
     );
