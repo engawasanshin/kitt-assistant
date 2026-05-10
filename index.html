@@ -1829,6 +1829,7 @@ async function sendMessage() {
      (_hasKnownStock && _lc.includes('分析') && /みせて|見せて|表示して/.test(_lc))) ||
     /顔写真|顔を撮|selfie/.test(_lc) ||
     /健康記録|顔色.*記録|顔色.*履歴|健康.*タイムライン|健康.*履歴/.test(_lc) ||
+    /バイタル|血圧|血糖|心拍|服薬|健康.*ダッシュボード|健康.*データ/.test(_lc) ||
     /体重グラフ|体重.*推移|体重.*見せて|体重.*記録/.test(_lc) ||
     /今日の天気|天気.*教えて|天気.*どう|天気は/.test(_lc) ||
     /為替|ドル円|元円|(?:^|[\s。、])レート/.test(_lc) ||
@@ -3673,15 +3674,18 @@ async function analyzeFace(dateKey) {
       photos[dateKey].analysisDate = new Date().toISOString();
       localStorage.setItem('kitt_face_photos', JSON.stringify(photos));
     }
-    // コメント入力フォームを表示
-    addSystemMessageWithHTML(`<div class="face-comment-form" style="font-size:12px;">
-  <div style="color:#88aaff;margin-bottom:6px;">📝 今の体調・気分を一言で記録（任意）</div>
-  <input id="fci_${dateKey}" type="text" placeholder="例：少し疲れ気味、すごく元気、など"
-    style="width:100%;background:#0a0a1a;border:1px solid #2a2a6a;color:#e0e0e0;border-radius:4px;padding:6px;font-size:12px;box-sizing:border-box;font-family:'Courier New',monospace;">
-  <button onclick="saveFaceComment('${dateKey}',document.getElementById('fci_${dateKey}').value);this.closest('.face-comment-form').innerHTML='✅ コメントを記録しました'"
-    style="margin-top:6px;background:#1a1a3a;color:#88aaff;border:1px solid #2a2a6a;border-radius:4px;padding:5px 14px;cursor:pointer;font-size:11px;font-family:'Courier New',monospace;width:100%;">
-    💾 記録する
-  </button>
+    // コメント＋バイタル入力フォームを表示
+    addSystemMessageWithHTML(`<div style="font-size:12px;">
+  <div class="face-comment-form" style="margin-bottom:10px;">
+    <div style="color:#88aaff;margin-bottom:6px;">📝 今の体調・気分を一言で記録（任意）</div>
+    <input id="fci_${dateKey}" type="text" placeholder="例：少し疲れ気味、すごく元気、など"
+      style="width:100%;background:#0a0a1a;border:1px solid #2a2a6a;color:#e0e0e0;border-radius:4px;padding:6px;font-size:12px;box-sizing:border-box;font-family:'Courier New',monospace;">
+    <button onclick="saveFaceComment('${dateKey}',document.getElementById('fci_${dateKey}').value);this.closest('.face-comment-form').innerHTML='✅ コメントを記録しました'"
+      style="margin-top:6px;background:#1a1a3a;color:#88aaff;border:1px solid #2a2a6a;border-radius:4px;padding:5px 14px;cursor:pointer;font-size:11px;font-family:'Courier New',monospace;width:100%;">
+      💾 記録する
+    </button>
+  </div>
+  ${getVitalInputFormHTML(dateKey)}
 </div>`);
   } catch(e) {
     addSystemMessage(`⚠️ 顔色診断エラー: ${e.message}`);
@@ -3735,22 +3739,195 @@ function showHealthTimeline() {
     return;
   }
   let html = `<div style="font-size:12px;"><div style="color:#88aaff;font-weight:bold;margin-bottom:10px;">🏥 健康記録タイムライン（${withData.length}件）</div>`;
+  const healthLog = getHealthLog();
   withData.forEach(k => {
     const p = photos[k];
     const d = new Date(k);
     const dateLabel = `${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()}`;
     const excerpt = p.aiAnalysis ? (p.aiAnalysis.length > 60 ? p.aiAnalysis.slice(0, 60) + '…' : p.aiAnalysis) : '';
+    const vitals = healthLog[k] || {};
+    let vitalStr = '';
+    for (const param of HEALTH_PARAMS) {
+      if (param.key === 'bpDiastolic') continue;
+      if (param.key === 'bpSystolic' && vitals.bpSystolic) {
+        vitalStr += `🩺${vitals.bpSystolic}/${vitals.bpDiastolic || '?'} `;
+      } else if (vitals[param.key] !== undefined) {
+        vitalStr += `${param.icon}${vitals[param.key]}${param.unit} `;
+      }
+    }
     html += `<div style="display:flex;gap:10px;margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid #222;">
       <img src="${p.dataUrl}" onclick="analyzeFace('${k}')" style="width:56px;height:56px;object-fit:cover;border-radius:6px;border:1px solid #2a4a2a;flex-shrink:0;cursor:pointer;">
       <div style="flex:1;min-width:0;">
         <div style="color:#88aaff;font-size:11px;margin-bottom:3px;">📅 ${dateLabel}</div>
         ${p.userComment ? `<div style="color:#88cc88;margin-bottom:3px;">💬 ${escapeHtml(p.userComment)}</div>` : ''}
+        ${vitalStr ? `<div style="color:#aaa;font-size:11px;margin-bottom:3px;">${vitalStr}</div>` : ''}
         ${excerpt ? `<div style="color:#888;font-size:11px;line-height:1.4;">${escapeHtml(excerpt)}</div>` : ''}
         ${!p.aiAnalysis ? `<button onclick="analyzeFace('${k}')" style="background:#1a1a3a;color:#88aaff;border:1px solid #2a2a6a;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:10px;font-family:'Courier New',monospace;">🔍 診断する</button>` : ''}
       </div>
     </div>`;
   });
   html += '</div>';
+  addSystemMessageWithHTML(html);
+}
+
+// ============================================================
+// 健康バイタル記録システム（拡張可能設計）
+// ============================================================
+// 新パラメータ追加: HEALTH_PARAMS にエントリを1行追加するだけで
+// 入力フォーム・ダッシュボード・タイムラインに自動反映される
+
+const HEALTH_PARAMS = [
+  { key: 'weight',      label: '体重',       unit: 'kg',    type: 'number', icon: '⚖️',
+    pattern: /体重[\s:：]?\s*(\d+\.?\d*)\s*k?g/i },
+  { key: 'height',      label: '身長',       unit: 'cm',    type: 'number', icon: '📏',
+    pattern: /身長[\s:：]?\s*(\d+\.?\d*)\s*cm/i },
+  { key: 'bpSystolic',  label: '最高血圧',   unit: 'mmHg',  type: 'number', icon: '🩺',
+    pattern: null },  // 血圧は bpDiastolic と一緒に専用パターンで処理
+  { key: 'bpDiastolic', label: '最低血圧',   unit: 'mmHg',  type: 'number', icon: '🩺',
+    pattern: null },
+  { key: 'bloodSugar',  label: '血糖値',     unit: 'mg/dL', type: 'number', icon: '🩸',
+    pattern: /血糖値?[\s:：]?\s*(\d+\.?\d*)/i },
+  { key: 'heartRate',   label: '心拍数',     unit: 'bpm',   type: 'number', icon: '💓',
+    pattern: /心拍[\s:：]?\s*(\d+)/i },
+  { key: 'sleep',       label: '睡眠時間',   unit: 'h',     type: 'number', icon: '😴',
+    pattern: /睡眠[\s:：]?\s*(\d+\.?\d*)\s*h?時間?/i },
+  { key: 'medications', label: '服薬',       unit: '',      type: 'text',   icon: '💊',
+    pattern: null },  // 自然言語では難しいため手動入力
+  // ↑ 新パラメータはここに追加するだけでOK
+];
+
+function getHealthLog() {
+  return JSON.parse(localStorage.getItem('kitt_health_log') || '{}');
+}
+
+function saveHealthEntry(dateKey, key, value) {
+  const log = getHealthLog();
+  if (!log[dateKey]) log[dateKey] = {};
+  log[dateKey][key] = value;
+  log[dateKey].updatedAt = new Date().toISOString();
+  localStorage.setItem('kitt_health_log', JSON.stringify(log));
+  // 体重は既存kitt_weight_logにも同期（後方互換性）
+  if (key === 'weight') {
+    const wlog = JSON.parse(localStorage.getItem('kitt_weight_log') || '{}');
+    wlog[dateKey] = { kg: value, timestamp: new Date().toISOString() };
+    localStorage.setItem('kitt_weight_log', JSON.stringify(wlog));
+  }
+}
+
+// 各パラメータの最新値を取得（キー→{value, date}）
+function getLatestHealthValues() {
+  const log = getHealthLog();
+  const result = {};
+  const sortedDates = Object.keys(log).sort().reverse();
+  for (const param of HEALTH_PARAMS) {
+    for (const d of sortedDates) {
+      if (log[d][param.key] !== undefined) {
+        result[param.key] = { value: log[d][param.key], date: d };
+        break;
+      }
+    }
+  }
+  return result;
+}
+
+// バイタル入力フォームHTML（analyzeAndRecordやanalyzeAfter顔色診断から呼ぶ）
+function getVitalInputFormHTML(dateKey) {
+  const log = getHealthLog();
+  const today = log[dateKey] || {};
+  let fields = '';
+  for (const p of HEALTH_PARAMS) {
+    if (p.key === 'bpDiastolic') continue; // 血圧は最高・最低を1行で表示
+    const val = today[p.key] !== undefined ? today[p.key] : '';
+    if (p.key === 'bpSystolic') {
+      const valD = today['bpDiastolic'] !== undefined ? today['bpDiastolic'] : '';
+      fields += `<div style="display:flex;align-items:center;gap:4px;margin-bottom:4px;">
+        <span style="color:#888;width:18px;">${p.icon}</span>
+        <span style="color:#aaa;font-size:11px;width:70px;">血圧</span>
+        <input id="hv_${dateKey}_bpSystolic" type="number" placeholder="最高" value="${val}"
+          style="width:52px;background:#0a0a1a;border:1px solid #333;color:#e0e0e0;border-radius:3px;padding:3px 5px;font-size:11px;text-align:center;">
+        <span style="color:#666;">/</span>
+        <input id="hv_${dateKey}_bpDiastolic" type="number" placeholder="最低" value="${valD}"
+          style="width:52px;background:#0a0a1a;border:1px solid #333;color:#e0e0e0;border-radius:3px;padding:3px 5px;font-size:11px;text-align:center;">
+        <span style="color:#666;font-size:10px;">mmHg</span>
+      </div>`;
+    } else if (p.type === 'text') {
+      fields += `<div style="display:flex;align-items:center;gap:4px;margin-bottom:4px;">
+        <span style="color:#888;width:18px;">${p.icon}</span>
+        <span style="color:#aaa;font-size:11px;width:70px;">${p.label}</span>
+        <input id="hv_${dateKey}_${p.key}" type="text" placeholder="薬名など" value="${escapeHtml(String(val))}"
+          style="flex:1;background:#0a0a1a;border:1px solid #333;color:#e0e0e0;border-radius:3px;padding:3px 5px;font-size:11px;">
+      </div>`;
+    } else {
+      fields += `<div style="display:flex;align-items:center;gap:4px;margin-bottom:4px;">
+        <span style="color:#888;width:18px;">${p.icon}</span>
+        <span style="color:#aaa;font-size:11px;width:70px;">${p.label}</span>
+        <input id="hv_${dateKey}_${p.key}" type="number" step="0.1" placeholder="-" value="${val}"
+          style="width:70px;background:#0a0a1a;border:1px solid #333;color:#e0e0e0;border-radius:3px;padding:3px 5px;font-size:11px;text-align:right;">
+        <span style="color:#666;font-size:10px;">${p.unit}</span>
+      </div>`;
+    }
+  }
+  return `<div class="vital-form" style="font-size:12px;margin-top:8px;">
+  <div style="color:#88cc88;margin-bottom:6px;">📊 バイタル記録（${dateKey}・任意）</div>
+  ${fields}
+  <button onclick="saveVitalForm('${dateKey}')"
+    style="margin-top:6px;background:#1a3a1a;color:#88cc88;border:1px solid #2a6a2a;border-radius:4px;padding:5px 14px;cursor:pointer;font-size:11px;font-family:'Courier New',monospace;width:100%;">
+    💾 バイタルを記録する
+  </button>
+</div>`;
+}
+
+// フォームから全パラメータを一括保存
+function saveVitalForm(dateKey) {
+  let saved = [];
+  for (const p of HEALTH_PARAMS) {
+    const el = document.getElementById(`hv_${dateKey}_${p.key}`);
+    if (!el || el.value.trim() === '') continue;
+    const val = p.type === 'number' ? parseFloat(el.value) : el.value.trim();
+    if (p.type === 'number' && isNaN(val)) continue;
+    saveHealthEntry(dateKey, p.key, val);
+    saved.push(`${p.icon}${p.label}: ${val}${p.unit}`);
+  }
+  const form = document.querySelector('.vital-form');
+  if (form) form.innerHTML = saved.length > 0
+    ? `<div style="color:#88cc88;">✅ 記録しました<br><span style="color:#666;font-size:11px;">${saved.join(' / ')}</span></div>`
+    : `<div style="color:#666;">（入力なし）</div>`;
+}
+
+// バイタルダッシュボード
+function showVitalDashboard() {
+  const latest = getLatestHealthValues();
+  if (Object.keys(latest).length === 0) {
+    addMessage('kitt', '📊 バイタルデータがまだありません。「バイタルを記録する」と話しかけるか、顔色診断後のフォームから記録してください。');
+    return;
+  }
+  const log = getHealthLog();
+  const today = new Date().toISOString().split('T')[0];
+  let html = `<div style="font-size:12px;"><div style="color:#88cc88;font-weight:bold;margin-bottom:8px;">📊 最新バイタル値</div>`;
+  for (const p of HEALTH_PARAMS) {
+    if (p.key === 'bpDiastolic') continue;
+    if (p.key === 'bpSystolic') {
+      const s = latest['bpSystolic'];
+      const d = latest['bpDiastolic'];
+      if (!s && !d) continue;
+      const val = s ? `${s.value}/${d ? d.value : '?'} mmHg` : '未記録';
+      const date = s ? (s.date === today ? '今日' : s.date) : '';
+      html += `<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid #222;">
+        <span style="color:#aaa;">🩺 血圧</span>
+        <span style="color:#e0e0e0;">${val} <span style="color:#555;font-size:10px;">${date}</span></span>
+      </div>`;
+    } else {
+      const entry = latest[p.key];
+      if (!entry) continue;
+      const date = entry.date === today ? '今日' : entry.date;
+      html += `<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid #222;">
+        <span style="color:#aaa;">${p.icon} ${p.label}</span>
+        <span style="color:#e0e0e0;">${entry.value}${p.unit} <span style="color:#555;font-size:10px;">${date}</span></span>
+      </div>`;
+    }
+  }
+  const dateKey = today;
+  html += `<div style="margin-top:10px;">${getVitalInputFormHTML(dateKey)}</div></div>`;
   addSystemMessageWithHTML(html);
 }
 
@@ -7666,6 +7843,32 @@ function analyzeAndRecord(text) {
   if (/健康記録|顔色.*記録|顔色.*履歴|健康.*タイムライン|健康.*履歴/.test(lowerText)) {
     showHealthTimeline();
     return;
+  }
+
+  // バイタルダッシュボード
+  if (/バイタル|血圧.*見せて|血糖.*見せて|心拍.*見せて|健康.*ダッシュボード|健康.*データ/.test(lowerText)) {
+    showVitalDashboard();
+    return;
+  }
+
+  // バイタル自然言語入力（「血圧120/80」「体重70.5kg」など）
+  const today = new Date().toISOString().split('T')[0];
+  // 血圧（専用パターン: 120/80）
+  const bpMatch = lowerText.match(/血圧[\s:：]?\s*(\d+)\s*\/\s*(\d+)/);
+  if (bpMatch) {
+    saveHealthEntry(today, 'bpSystolic', parseInt(bpMatch[1]));
+    saveHealthEntry(today, 'bpDiastolic', parseInt(bpMatch[2]));
+    addSystemMessage(`🩺 血圧を記録しました: ${bpMatch[1]}/${bpMatch[2]} mmHg`);
+  }
+  // 各パラメータの自然言語パターン
+  for (const p of HEALTH_PARAMS) {
+    if (!p.pattern) continue;
+    const m = lowerText.match(p.pattern);
+    if (m) {
+      const val = p.type === 'number' ? parseFloat(m[1]) : m[1];
+      saveHealthEntry(today, p.key, val);
+      addSystemMessage(`${p.icon} ${p.label}を記録しました: ${val}${p.unit}`);
+    }
   }
 
   // 顔写真
