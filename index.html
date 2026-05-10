@@ -1673,7 +1673,7 @@ window.addEventListener('load', async () => {
     addSystemMessage('APIキーを設定してください（右上の歯車アイコン）');
   } else {
     if (chatHistory.length === 0) {
-      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-05-07a / bugfix]');
+      addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-05-08a / bugfix]');
     } else {
       restoreHistory();
     }
@@ -2251,7 +2251,7 @@ async function saveSettings() {
 
   closeSettings();
   if (chatHistory.length === 0 && apiKey) {
-    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-05-07a / bugfix]');
+    addSystemMessage('K.I.T.T. オンライン。お話しください、マイケル。[v2026-05-08a / bugfix]');
   }
 }
 
@@ -3365,17 +3365,25 @@ async function analyzeTechnicalIndicators(ticker, months = 3) {
     }
   }
 
-  const recent = 30;
-  const r = (arr) => arr.slice(-recent).map(v => v === null ? 'null' : (Math.round(v * 10) / 10).toString());
+  // 3日おきサンプリング（グラフ形状を保ちつつデータ量を約1/3に削減）
+  const sample3 = (arr) => arr.filter((_, i) => i % 3 === 0 || i === arr.length - 1);
+  const fmt = (v) => v === null || v === undefined ? 'null' : (Math.round(v * 10) / 10).toString();
+
+  const sampledDates   = sample3(hist.dates);
+  const sampledCloses  = sample3(closes);
+  const sampledSma5    = sample3(sma5);
+  const sampledBBupper = sample3(bb20.map(b => b.upper));
+  const sampledBBlower = sample3(bb20.map(b => b.lower));
+  const sampledN       = sampledCloses.length;
 
   const prompt = `
 あなたは株式テクニカル分析の教育支援AIです。以下のデータを分析し、初心者向けに解説してください。
 
 【銘柄】${ticker}（${hist.dates[0]} 〜 ${hist.dates[n-1]}、${n}営業日）
-【分析期間】約${months}ヶ月
+【分析期間】約${months}ヶ月（3日おきサンプリング: ${sampledN}点）
 
-【直近${recent}日間の終値】
-${r(closes).join(', ')}
+【終値（3日おきサンプリング）】
+${sampledCloses.map(fmt).join(', ')}
 
 【最新テクニカル指標】
 - 現在株価: ${latest.toFixed(1)}
@@ -3384,12 +3392,12 @@ ${r(closes).join(', ')}
 - ボリンジャーバンド(20日/±2σ): 上限 ${latestBB.upper?.toFixed(1) ?? 'N/A'} / 中央 ${latestBB.middle?.toFixed(1) ?? 'N/A'} / 下限 ${latestBB.lower?.toFixed(1) ?? 'N/A'}
 - 直近クロスシグナル: ${crossSignal}
 
-【5日SMA（直近${recent}日）】
-${r(sma5).join(', ')}
+【5日SMA（3日おきサンプリング）】
+${sampledSma5.map(fmt).join(', ')}
 
-【ボリンジャー上限/下限（直近${recent}日）】
-上: ${r(bb20.map(b => b.upper)).join(', ')}
-下: ${r(bb20.map(b => b.lower)).join(', ')}
+【ボリンジャー上限/下限（3日おきサンプリング）】
+上: ${sampledBBupper.map(fmt).join(', ')}
+下: ${sampledBBlower.map(fmt).join(', ')}
 
 以下のJSON形式で回答してください。断定的な売買推奨は絶対に避け、教育的・参考情報として回答してください。
 `;
@@ -3399,7 +3407,7 @@ ${r(sma5).join(', ')}
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
     generationConfig: {
       temperature: 0.3,
-      maxOutputTokens: 4096,
+      maxOutputTokens: 8192,  // 2.5-flashのthinkingトークン分を確保
       responseMimeType: 'application/json',
       responseSchema: {
         type: 'object',
