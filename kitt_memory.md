@@ -361,7 +361,7 @@ GPS記録後にメモを追加できるようになった。
 | ~~🐛中~~ | ~~Stooq直接・プロキシ両方失敗~~ | ✅ 2026-05-04修正。`fetchStockQuote`にcorsproxy/thingproxy/codetabs追加（計5プロキシ）。5/4夜に4/5件取得成功を確認 |
 | ~~🐛高~~ | ~~📍GPSボタン：ボタンは押せるが座標が記録されない~~ | ✅ 2026-05-05修正・動作確認済み。`saveMemoEntry`のGPSエラーをサイレント継続→エラーコード別メッセージ表示に変更。タイムアウト8s→15s。iPhone Chrome で座標取得・メモ保存を確認 |
 | 🐛中 | Alpha Vantage API複合問題 | ③⑥は修正済み: .TYO形式はfree plan TIME_SERIES_DAILYで無効→.Tサフィックスフォールバック追加。AV制限カウンター即時同期修正。AV free plan = 25リクエスト/日（500ではない）。残課題: ②株価詳細取得（stooq Gzip修正で改善見込み）④AV 25/日はwatchlist5銘柄+テクニカル分析で消費されやすい→stooqが主軸になれば改善見込み |
-| 🐛中 | ウォッチリストへの銘柄追加が部分的にしか機能しない | 5/7確認：5銘柄は正常（トヨタ・三菱UFJ・INPEX・東電・SCREEN）。ディスコ（6146.T）が入っていない。要調査 |
+| ~~🐛中~~ | ~~ウォッチリストへの銘柄追加が部分的にしか機能しない~~ | ✅ 2026-05-10修正（commit 6770d55）。根本原因: `seedDefaultWatchlist()`は「リストが空の時のみ」動くため、デフォルトに後から追加されたディスコ（6146.T）が既存ユーザーに届かなかった。`patchMissingDefaultStocks()`を追加し起動時に差分補完。次回起動時に自動追加される |
 | ~~🐛中~~ | ~~ウォッチリストがスクロールできない・画面占有~~ | ✅ 2026-05-06修正。greetingArea・ウォッチリストを折りたたみUI化。デフォルト折りたたみ・localStorage永続化。塩川さん「とてもいいですね」と確認 |
 | ~~🐛中~~ | ~~銘柄詳細画面への遷移不可・グラフ表示されない~~ | ✅ 2026-05-06修正。根本原因: corsproxy.io経由のstooq CSVがGzip圧縮バイナリで返る（213バイトのバイナリログで確認・magic bytes 0x1F 0x8B）。decompressResponse()でDecompressionStream自動解凍実装。並列Promise.any()フェッチも実装。AV .TYO→.Tフォールバック追加。明日AV reset後に三菱UFJで最終確認予定 |
 | ~~🐛中~~ | ~~KITT自己チェック機能が不完全~~ | ✅ 2026-05-06修正。getAppStateContext()がAV使用量を「XX/500」と誤注入していた（正しくは25/日）。KITTが「まだ余裕がある」と誤認してAVを呼び続けていた根本原因の一つ。AV_DAILY_LIMIT定数を使用するよう修正 |
@@ -706,6 +706,7 @@ GPS記録後にメモを追加できるようになった。
 - **健全性チェックキー名バグ**（2026-03-29）: kitt_av_key_encrypted → alpha_vantage_api_key_encryptedに修正
 
 ### 最終更新
+2026-05-10 (2): Claude Code - Bug#9完了: ディスコ（6146.T）ウォッチリスト未追加問題修正（commit 6770d55）。`patchMissingDefaultStocks()`実装→起動時にデフォルト6銘柄の差分補完。残課題: stooq quote（現在値エンドポイント）がYahooフォールバック中（機能はしている）。
 2026-05-10: Claude Code - 5/6夜〜5/7昼ログ4件処理。Bug#5最終確認：三菱UFJ・INPEXのテクニカル分析成功（Gzip修正が効いた）。stooq quote（現在値）はYahooフォールバックで価格取得成功。ウォッチリスト実態：5銘柄正常・ディスコ（6146.T）なし→要調査。塩川さん方針「既知問題クローズ優先→新機能へ」確認。
 2026-05-06 (2): Claude Code - バグ全件解消・Tips強化。
   ①Bug#5完了: stooq CSV Gzip自動解凍（decompressResponse / DecompressionStream）・Promise.any並列フェッチ実装。AV .TYO→.Tフォールバック・制限カウンター即時同期・stooqテスト診断コマンド追加。
