@@ -1499,7 +1499,7 @@ function getCurrentTimeContext() {
     (now.getHours() >= 5 && now.getHours() < 12) ? '朝' :
     (now.getHours() >= 12 && now.getHours() < 18) ? '昼' : '夜';
 
-  return `\n\n--- 現在時刻 ---\n日時: ${year}年${month}月${day}日（${weekday}曜日）${hours}:${minutes}\n時間帯: ${timeOfDay}\n\n【重要】この時刻情報を必ず考慮して応答してください。挨拶や提案は現在の時間帯に合わせてください。`;
+  return `\n\n--- 現在時刻（最優先・毎回更新） ---\n日時: ${year}年${month}月${day}日（${weekday}曜日）${hours}:${minutes}\n時間帯: ${timeOfDay}\n\n【絶対ルール】この「現在時刻」セクションの日時が唯一の正確な現在時刻です。コンテキスト内の他の日付・時刻（ファイル生成日時・最終更新日時など）は過去の記録であり、現在時刻として使用しないでください。挨拶や提案は必ずこの時間帯に合わせてください。`;
 }
 
 function addLocalMemory(fact) {
@@ -1549,7 +1549,6 @@ async function loadStatusContext() {
     const data = await res.json();
 
     const parts = [];
-    parts.push(`[現在の日時: ${new Date().toLocaleString('ja-JP')}]`);
     parts.push(`[最終更新: ${data.generated_at}]`);
 
     if (data.projects) {
@@ -1842,6 +1841,8 @@ async function sendMessage() {
     /中国語|フレーズ|緊急連絡先|中国.*連絡|大使館/.test(_lc) ||
     /プロジェクト.*作|プロジェクト.*開始|新規プロジェクト/.test(_lc) ||
     /プロジェクト.*(?:一覧|リスト|見せて|確認)/.test(_lc) ||
+    /(?:日誌|ジャーナル).*(?:見せて|確認|開いて|表示)/.test(_lc) ||
+    /プロジェクト.*(?:名前|名称).*(?:変更|変えて|直して)/.test(_lc) ||
     (/の資料|のファイル|のデータ/.test(_lc) && /見せて|確認|一覧/.test(_lc)) ||
     (/に資料|にファイル|にデータ|に追加/.test(_lc) && /追加|入れて|保存/.test(_lc)) ||
     (/プロジェクト/.test(_lc) && /エクスポート|ダウンロード/.test(_lc)) ||
@@ -1875,6 +1876,11 @@ async function sendMessage() {
     chatHistory.push({ role: 'kitt', text: response, timestamp: new Date().toISOString() });
     saveHistory();
     updateExportButtonUI(); // Update export button badge
+    // 日誌記録中なら自動保存
+    if (_activeJournalProject) {
+      addJournalEntry(_activeJournalProject, text, 'user').catch(() => {});
+      addJournalEntry(_activeJournalProject, response, 'kitt').catch(() => {});
+    }
   } catch (err) {
     typing.classList.remove('active');
     addSystemMessage(`エラー: ${err.message}`);
@@ -6977,6 +6983,22 @@ function analyzeAndRecord(text) {
     exportProjectForClaudeCode(_projExport[1].trim());
     return;
   }
+  // 「車修理の日誌を見せて」
+  const _journalView = /^(.+?)(?:の日誌|のジャーナル).*(?:見せて|確認|開いて|表示)/i.exec(text);
+  if (_journalView) {
+    showProjectJournal(_journalView[1].trim());
+    return;
+  }
+  if (/(?:日誌|ジャーナル).*(?:見せて|確認|開いて|表示)/.test(lowerText) && _activeJournalProject) {
+    showProjectJournal(_activeJournalProject);
+    return;
+  }
+  // 「日誌記録を停止」
+  if (/日誌.*(?:停止|止めて|オフ)|記録.*停止/.test(lowerText)) {
+    _activeJournalProject = null;
+    addSystemMessage('📔 日誌の自動記録を停止しました。');
+    return;
+  }
 
   // === イベント日時の自動検出・記録 ===
   const detectedEvents = detectCompletedEvents(text);
@@ -8732,7 +8754,7 @@ let _projectDB = null;
 async function initProjectDB() {
   if (_projectDB) return;
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open('kitt_project_db', 1);
+    const req = indexedDB.open('kitt_project_db', 2);
     req.onupgradeneeded = e => {
       const db = e.target.result;
       if (!db.objectStoreNames.contains('projects')) {
@@ -8742,6 +8764,11 @@ async function initProjectDB() {
       if (!db.objectStoreNames.contains('project_files')) {
         const fs = db.createObjectStore('project_files', { keyPath: 'id', autoIncrement: true });
         fs.createIndex('projectName', 'projectName', { unique: false });
+      }
+      if (!db.objectStoreNames.contains('project_journal')) {
+        const js = db.createObjectStore('project_journal', { keyPath: 'id', autoIncrement: true });
+        js.createIndex('projectName', 'projectName', { unique: false });
+        js.createIndex('createdAt', 'createdAt', { unique: false });
       }
     };
     req.onsuccess = e => { _projectDB = e.target.result; resolve(); };
@@ -8782,6 +8809,45 @@ async function deleteProject(id) {
     const tx = _projectDB.transaction('projects', 'readwrite');
     tx.objectStore('projects').delete(id);
     tx.oncomplete = resolve;
+    tx.onerror = e => reject(e.target.error);
+  });
+}
+
+async function updateProjectName(id, newName) {
+  await initProjectDB();
+  const existing = await getProjects();
+  if (existing.some(p => p.name === newName && p.id !== id)) {
+    alert(`「${newName}」という名前のプロジェクトは既に存在します。`);
+    return false;
+  }
+  const project = existing.find(p => p.id === id);
+  if (!project) return false;
+  const oldName = project.name;
+  project.name = newName;
+  const storeNames = ['projects', 'project_files'];
+  if (_projectDB.objectStoreNames.contains('project_journal')) storeNames.push('project_journal');
+  return new Promise((resolve, reject) => {
+    const tx = _projectDB.transaction(storeNames, 'readwrite');
+    tx.objectStore('projects').put(project);
+    // ファイルのprojectName更新
+    const fileReq = tx.objectStore('project_files').index('projectName').getAll(oldName);
+    fileReq.onsuccess = () => {
+      for (const f of fileReq.result) {
+        f.projectName = newName;
+        tx.objectStore('project_files').put(f);
+      }
+    };
+    // 日誌のprojectName更新（ストアが存在する場合のみ）
+    if (storeNames.includes('project_journal')) {
+      const jReq = tx.objectStore('project_journal').index('projectName').getAll(oldName);
+      jReq.onsuccess = () => {
+        for (const j of jReq.result) {
+          j.projectName = newName;
+          tx.objectStore('project_journal').put(j);
+        }
+      };
+    }
+    tx.oncomplete = () => resolve(true);
     tx.onerror = e => reject(e.target.error);
   });
 }
@@ -8844,6 +8910,16 @@ async function downloadProjectFile(id, fileName, fileType) {
   };
 }
 
+async function promptRenameProject(id, currentName) {
+  const newName = prompt(`プロジェクト名を変更します:\n現在: ${currentName}\n\n新しい名前を入力してください:`, currentName);
+  if (!newName || newName.trim() === '' || newName.trim() === currentName) return;
+  const ok = await updateProjectName(id, newName.trim());
+  if (ok) {
+    addSystemMessage(`✅ プロジェクト名を「${currentName}」→「${newName.trim()}」に変更しました。`);
+    showProjectList();
+  }
+}
+
 // プロジェクト一覧表示
 async function showProjectList() {
   const projects = await getProjects();
@@ -8864,13 +8940,107 @@ async function showProjectList() {
       </div>
       <div style="display:flex;gap:5px;flex-shrink:0;">
         <button onclick="showProjectFiles('${escapeHtml(p.name)}')" style="background:#1a1a3a;color:#88aaff;border:1px solid #2a2a6a;border-radius:4px;padding:3px 8px;cursor:pointer;font-size:10px;font-family:'Courier New',monospace;">📋</button>
+        <button onclick="showProjectJournal('${escapeHtml(p.name)}')" style="background:#1a2a1a;color:#88ddaa;border:1px solid #2a4a2a;border-radius:4px;padding:3px 8px;cursor:pointer;font-size:10px;font-family:'Courier New',monospace;">📔</button>
         <button onclick="showFileUploadUI('${escapeHtml(p.name)}')" style="background:#1a3a1a;color:#88cc88;border:1px solid #2a6a2a;border-radius:4px;padding:3px 8px;cursor:pointer;font-size:10px;font-family:'Courier New',monospace;">📎</button>
+        <button onclick="promptRenameProject(${p.id},'${escapeHtml(p.name)}')" style="background:#2a2a1a;color:#cccc44;border:1px solid #4a4a1a;border-radius:4px;padding:3px 8px;cursor:pointer;font-size:10px;font-family:'Courier New',monospace;">✎</button>
         <button onclick="deleteProject(${p.id}).then(showProjectList)" style="background:#1a0000;color:#cc4444;border:1px solid #4a1a1a;border-radius:4px;padding:3px 8px;cursor:pointer;font-size:10px;font-family:'Courier New',monospace;">✕</button>
       </div>
     </div>`;
   }
   html += '</div>';
   addSystemMessageWithHTML(html);
+}
+
+// ========================================
+// プロジェクト日誌（E.2）
+// ========================================
+
+async function addJournalEntry(projectName, text, role = 'user') {
+  await initProjectDB();
+  return new Promise((resolve, reject) => {
+    const tx = _projectDB.transaction('project_journal', 'readwrite');
+    const req = tx.objectStore('project_journal').add({
+      projectName,
+      role,
+      text,
+      createdAt: new Date().toISOString()
+    });
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = e => reject(e.target.error);
+  });
+}
+
+async function getJournalEntries(projectName) {
+  await initProjectDB();
+  return new Promise((resolve, reject) => {
+    const tx = _projectDB.transaction('project_journal', 'readonly');
+    const req = tx.objectStore('project_journal').index('projectName').getAll(projectName);
+    req.onsuccess = () => resolve(req.result.sort((a, b) => a.createdAt.localeCompare(b.createdAt)));
+    req.onerror = e => reject(e.target.error);
+  });
+}
+
+async function deleteJournalEntry(id) {
+  await initProjectDB();
+  return new Promise((resolve, reject) => {
+    const tx = _projectDB.transaction('project_journal', 'readwrite');
+    tx.objectStore('project_journal').delete(id);
+    tx.oncomplete = resolve;
+    tx.onerror = e => reject(e.target.error);
+  });
+}
+
+let _activeJournalProject = null; // 現在日誌記録中のプロジェクト名
+
+async function showProjectJournal(projectName) {
+  _activeJournalProject = projectName;
+  const entries = await getJournalEntries(projectName);
+  const esc = escapeHtml(projectName);
+  let html = `<div style="font-size:12px;">
+    <div style="color:#88ddaa;font-weight:bold;margin-bottom:8px;">📔 プロジェクト日誌: ${esc}</div>
+    <div style="color:#555;font-size:10px;margin-bottom:8px;">📌 記録中のプロジェクト: <span style="color:#88ddaa;">${esc}</span>
+    　<button onclick="_activeJournalProject=null;addSystemMessage('日誌記録を停止しました。');" style="background:#2a1a1a;color:#cc4444;border:1px solid #4a1a1a;border-radius:3px;padding:2px 6px;cursor:pointer;font-size:10px;font-family:'Courier New',monospace;">停止</button></div>`;
+
+  if (entries.length === 0) {
+    html += `<div style="color:#555;font-size:11px;padding:10px 0;">日誌エントリがありません。<br>会話が自動的に記録されます（記録中は上に表示）。<br>「日誌に記録して」と指示しても記録できます。</div>`;
+  } else {
+    for (const e of entries) {
+      const d = new Date(e.createdAt);
+      const dateStr = `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+      const roleIcon = e.role === 'user' ? '🧑' : '🤖';
+      const roleColor = e.role === 'user' ? '#aaaacc' : '#88ddaa';
+      const preview = e.text.length > 120 ? e.text.slice(0, 120) + '…' : e.text;
+      html += `<div style="padding:6px 0;border-bottom:1px solid #1a1a1a;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+          <span style="color:${roleColor};font-size:10px;">${roleIcon} ${dateStr}</span>
+          <button onclick="deleteJournalEntry(${e.id}).then(()=>showProjectJournal('${esc}'))" style="background:none;border:none;color:#444;cursor:pointer;font-size:10px;padding:0 2px;">✕</button>
+        </div>
+        <div style="color:#cccccc;margin-top:3px;word-break:break-word;">${escapeHtml(preview)}</div>
+      </div>`;
+    }
+  }
+  html += `<div style="margin-top:10px;display:flex;gap:5px;">
+    <button onclick="saveCurrentConversationToJournal('${esc}')" style="background:#1a2a1a;color:#88ddaa;border:1px solid #2a4a2a;border-radius:4px;padding:4px 10px;cursor:pointer;font-size:10px;font-family:'Courier New',monospace;">💾 今の会話を保存</button>
+    <button onclick="showProjectList()" style="background:#1a1a2a;color:#8888cc;border:1px solid #2a2a4a;border-radius:4px;padding:4px 10px;cursor:pointer;font-size:10px;font-family:'Courier New',monospace;">← 一覧へ</button>
+  </div></div>`;
+  addSystemMessageWithHTML(html);
+}
+
+async function saveCurrentConversationToJournal(projectName) {
+  if (chatHistory.length === 0) {
+    addSystemMessage('保存する会話がありません。');
+    return;
+  }
+  // 直近20件を保存
+  const recent = chatHistory.slice(-20);
+  let saved = 0;
+  for (const msg of recent) {
+    if (msg.role === 'system') continue;
+    await addJournalEntry(projectName, msg.text, msg.role === 'user' ? 'user' : 'kitt');
+    saved++;
+  }
+  addSystemMessage(`✅ 直近${saved}件の会話を「${projectName}」の日誌に保存しました。`);
+  showProjectJournal(projectName);
 }
 
 // プロジェクトファイル一覧表示
