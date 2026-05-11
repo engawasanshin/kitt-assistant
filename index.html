@@ -1996,18 +1996,22 @@ async function callGemini(userText) {
     });
   }
 
-  // Add current user message
+  // 現在時刻をユーザーメッセージに付加（Geminiが必ず参照できるよう、会話本文にも注入）
+  const _nowForMsg = new Date();
+  const _msgTimeStr = `${_nowForMsg.getFullYear()}年${String(_nowForMsg.getMonth()+1).padStart(2,'0')}月${String(_nowForMsg.getDate()).padStart(2,'0')}日 ${String(_nowForMsg.getHours()).padStart(2,'0')}:${String(_nowForMsg.getMinutes()).padStart(2,'0')} JST`;
   contents.push({
     role: 'user',
-    parts: [{ text: userText }]
+    parts: [{ text: `[送信時刻: ${_msgTimeStr}]\n${userText}` }]
   });
 
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 
+  // 時刻を最優先（システム指示の先頭）に置く
+  const _timeCtx = getCurrentTimeContext();
   const body = {
     contents,
     systemInstruction: {
-      parts: [{ text: systemPrompt + getCurrentTimeContext() + getAppStateContext() + getMemoryContext() + getEventLogContext() + statusContext }]
+      parts: [{ text: _timeCtx + systemPrompt + getAppStateContext() + getMemoryContext() + getEventLogContext() + statusContext }]
     },
     generationConfig: {
       temperature: 0.8,
