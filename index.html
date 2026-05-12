@@ -2106,7 +2106,7 @@ async function fetchStockQuote(symbol) {
       }
     } catch(e) { continue; }
   }
-  console.error('[stooq] 株価取得失敗（直接・プロキシ両方）、Yahoo Financeにフォールバック');
+  console.warn('[stooq] 株価取得失敗（直接・プロキシ両方）、Yahoo Financeにフォールバック');
 
   // ② Yahoo Finance フォールバック（現在価格）
   const yhSymbol = symbol.replace(/\.TYO$/, '.T');
@@ -3128,7 +3128,7 @@ async function fetchDailyHistoryYahoo(ticker, months = 3) {
   // Yahoo Finance: 全パターンを並列実行、最初の成功を使用
   const yahooResult = await Promise.any(yahooFetchers.map(f => f())).catch(() => null);
   if (yahooResult) return yahooResult;
-  console.error('[yahoo] 全試行失敗、stooqへフォールバック');
+  console.warn('[yahoo] 全試行失敗、stooqへフォールバック');
 
   // ② stooq.com（CSV形式、認証不要）
   const stooqSymbol = ticker.replace(/\.TYO$/, '').replace(/\.T$/, '') + '.jp';
@@ -3264,7 +3264,7 @@ async function fetchDailyHistory(ticker, months = 3) {
         localStorage.setItem(cacheKey, JSON.stringify(cache));
         return hist;
       } catch (yhErr) {
-        console.error('[stooq] 失敗、Alpha Vantageにフォールバック:', yhErr.message);
+        console.warn('[stooq] 失敗、Alpha Vantageにフォールバック:', yhErr.message);
       }
 
       // ② Alpha Vantage フォールバック（AV枠を節約：.TYO→.T の順に試す）
@@ -7289,7 +7289,10 @@ function analyzeAndRecord(text) {
         matchedStocks.push(info);
       }
     }
-    if (matchedStocks.length > 0) {
+    // 自然言語トリガー（気になる等）で株名なし → 誤作動なのでスキップ
+    if (_naturalAddIntent && !_explicitAddIntent && matchedStocks.length === 0) {
+      // fall through to Gemini（「気になる」が投資以外の文脈の場合）
+    } else if (matchedStocks.length > 0) {
       const priceCache = JSON.parse(localStorage.getItem('kitt_investment_price_cache') || '{}');
       const candidates = JSON.parse(localStorage.getItem('kitt_investment_candidates') || '[]');
       const added = [], skipped = [];
