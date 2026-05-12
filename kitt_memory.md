@@ -610,6 +610,17 @@ GPS記録後にメモを追加できるようになった。
 - "on a business trip"（by→on）など自然な言い回しを習得
 - 丁寧な質問フレーズ（"Do you happen to know...?" 等）
 
+**学習進捗**:
+- 2026-05-12 昼5分レッスン：「Do you happen to know...?」を実際の文で練習
+  - "Do you happen to know Yuto Ice? He is a wrestler." → スペルミス(prowresler→wrestler)・He's縮約フィードバック
+  - "Do you happen to know YouTube?" → 固有名詞大文字フィードバック。フレーズの応用力は高いと評価
+
+**TOEIC状況（2026-05-12）**:
+- 試験受験が必須と判明。「心配の種」として認識
+- 目標600点。KITT診断ではB1後半〜B2手前（600-700点台相当）なので達成可能圏内
+- 試験日は未定。決まったら逆算プランを立てる
+- 金フレ・公式問題集（購入済み）を活用予定
+
 **KITTの役割**: 各6項目のペルソナを使い分けて実施。進捗・履歴をプロジェクト日誌（E.2）に蓄積予定。Duolingo・金フレ・公式問題集と組み合わせたプランも提案可能。
 
 ---
@@ -856,9 +867,15 @@ GPS記録後にメモを追加できるようになった。
 **動作確認待ち（修正済みだが未テスト）**
 - Bug#12: テクニカル分析トークン上限切断（5/10修正）
 
+~~**新規バグ（2026-05-12検出・即日修正）**~~
+- ~~Bug#13: 「TOEIC」発言がウォッチリスト誤作動~~ ✅ 2026-05-12修正。自然言語トリガー(_naturalAddIntent)で株名なし→エラー表示しないよう変更。明示コマンドのみエラー表示。
+- ~~Bug#14: stooqログノイズ~~ ✅ 2026-05-12修正。フォールバック失敗ログをconsole.error→console.warnに変更し_errorBufferへの蓄積・KITTの誤報告を解消。
+
 ---
 
 ### 最終更新
+2026-05-12 (23): Bug#13(TOEIC誤作動)・Bug#14(stooqログノイズ)を即日修正・push済み。
+2026-05-12 (22): KITT会話ログ分析（2件）。①昼食：カレー大盛り＋フライセット700円。②英語5分レッスン：「Do you happen to know...?」をYuto Ice・YouTubeで実践、フレーズ応用力を高評価。③TOEIC受験必須と判明・600点目標・試験日未定・心配の種として認識。④Bug#13(TOEIC誤作動)・Bug#14(stooqログノイズ)をSection2に追加。夜：「今日も元気に頑張れました」。
 2026-05-11 (21): KITT会話ログ分析（2件）。時刻バグ動作確認完了：21:39に正しい時刻を表示。塩川さん「よし。なおった！！！時間は最低限きっちりしないとね」。根本原因はsystemPromptが長くgetCurrentTimeContext()がGeminiに届いていなかった点。時刻をシステム指示先頭＋ユーザーメッセージ注入の2段構えで解決。
 2026-05-11 (20): Claude Code - 3機能実装・push済み。①時刻バグ修正：statusContextフォールバックの起動時固定時刻を削除、getCurrentTimeContext()に「絶対ルール」として他の日付表記より優先する指示を追加。②E.3プロジェクト名変更：✎ボタン→promptRenameProject→updateProjectName（projects/files/journal全ストア名前更新）。③E.2プロジェクト日誌：IndexedDB v2（project_journalストア追加）・addJournalEntry/getJournalEntries・📔ボタンで日誌表示・_activeJournalProject中は会話を自動保存・「今の会話を保存」ボタン・日誌停止コマンド対応。
 2026-05-11 (19): KITT会話ログ分析（4件）。①時刻バグ確認：システムプロンプト時刻が起動時固定で7時間ずれ→Section2 TODOに追加。②英語学習プロジェクト開始：6項目教材登録、CEFR B1後半〜B2手前診断、TOEIC600点超え目標、カリキュラム設定済み。Section3に英語学習プロジェクト記録追加。
