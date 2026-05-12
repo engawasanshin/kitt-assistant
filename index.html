@@ -1846,6 +1846,7 @@ async function sendMessage() {
     (/の資料|のファイル|のデータ/.test(_lc) && /見せて|確認|一覧/.test(_lc)) ||
     (/に資料|にファイル|にデータ|に追加/.test(_lc) && /追加|入れて|保存/.test(_lc)) ||
     (/プロジェクト/.test(_lc) && /エクスポート|ダウンロード/.test(_lc)) ||
+    /写真.*解析|画像.*解析|スクショ.*解析|スクリーンショット.*解析|解析.*写真|解析.*画像/.test(_lc) ||
     _naturalAdd ||
     _isNewsQuery
     // ※_isStockQueryはGeminiに流す（会話できるよう）。ウォッチリストはanalyzeAndRecordで自動表示
@@ -6987,6 +6988,23 @@ function analyzeAndRecord(text) {
     exportProjectForClaudeCode(_projExport[1].trim());
     return;
   }
+  // 「車修理の写真を解析して」「画像を解析して」
+  const _analyzeFile = /^(.+?)(?:の写真|の画像|のスクショ|のスクリーンショット).*(?:解析|分析)/i.exec(text) ||
+                       /(?:写真|画像|スクショ|スクリーンショット).*(?:解析|分析).*?(?:「(.+?)」|「(.+?)」)?/i.exec(text);
+  if (/写真.*解析|画像.*解析|スクショ.*解析|スクリーンショット.*解析|解析.*写真|解析.*画像/.test(lowerText)) {
+    const projectName = (_analyzeFile && (_analyzeFile[1] || _analyzeFile[2] || _analyzeFile[3]) || '').trim();
+    if (projectName) {
+      // プロジェクト名が指定された場合: そのプロジェクトのファイル一覧を表示して解析ボタンを案内
+      addMessage('kitt', `📂 「${projectName}」のファイル一覧を表示します。🔍ボタンで画像を解析できます。`);
+      showProjectFiles(projectName);
+    } else {
+      // プロジェクト名なし: プロジェクト一覧を表示して選んでもらう
+      addMessage('kitt', `📂 どのプロジェクトの画像を解析しますか？プロジェクト一覧を表示します。\nファイル一覧の 🔍 ボタンで画像ごとにAI解析ができます。`);
+      showProjectList();
+    }
+    return;
+  }
+
   // 「車修理の日誌を見せて」
   const _journalView = /^(.+?)(?:の日誌|のジャーナル).*(?:見せて|確認|開いて|表示)/i.exec(text);
   if (_journalView) {
@@ -9075,6 +9093,8 @@ async function showProjectFiles(projectName) {
         <div style="color:#555;font-size:10px;">${dateStr} / ${sizeStr}</div>
       </div>
       <div style="display:flex;gap:4px;flex-shrink:0;margin-left:8px;">
+        ${f.fileType.startsWith('image') ? `<button onclick="analyzeProjectFile(${f.id},'${esc}')" style="background:#1a2a1a;color:#88ddaa;border:1px solid #2a5a2a;border-radius:4px;padding:3px 8px;cursor:pointer;font-size:10px;font-family:'Courier New',monospace;" title="AI解析">🔍</button>` : ''}
+        ${f.aiAnalysis ? `<button onclick="addMessage('kitt','📋 保存済み解析結果（${escapeHtml(f.fileName)}）\\n\\n'+${JSON.stringify(f.aiAnalysis || '')})" style="background:#1a1a2a;color:#8888cc;border:1px solid #2a2a5a;border-radius:4px;padding:3px 8px;cursor:pointer;font-size:10px;font-family:'Courier New',monospace;" title="保存済み解析を表示">📋</button>` : ''}
         <button onclick="downloadProjectFile(${f.id},'${escapeHtml(f.fileName)}','${f.fileType}')" style="background:#1a1a3a;color:#88aaff;border:1px solid #2a2a6a;border-radius:4px;padding:3px 8px;cursor:pointer;font-size:10px;font-family:'Courier New',monospace;">⬇</button>
         <button onclick="deleteProjectFile(${f.id}).then(()=>showProjectFiles('${esc}'))" style="background:#1a0000;color:#cc4444;border:1px solid #4a1a1a;border-radius:4px;padding:3px 8px;cursor:pointer;font-size:10px;font-family:'Courier New',monospace;">✕</button>
       </div>
@@ -9115,6 +9135,114 @@ async function uploadProjectFiles(projectName) {
   }
   const form = document.querySelector('.proj-upload-form');
   if (form) form.innerHTML = `<span style="color:#88cc88;">✅ ${saved}件を「${escapeHtml(projectName)}」に保存しました</span>`;
+}
+
+// ========================================
+// E.1 プロジェクトファイル AI解析（Gemini Vision）
+// ========================================
+
+async function analyzeProjectFile(fileId, projectName) {
+  if (!apiKey) { addSystemMessage('⚠️ Gemini APIキーが未設定です。'); return; }
+  await initProjectDB();
+  addSystemMessage('🔍 画像を解析中...');
+
+  // IndexedDBからファイル取得
+  const file = await new Promise((resolve, reject) => {
+    const tx = _projectDB.transaction('project_files', 'readonly');
+    const req = tx.objectStore('project_files').get(fileId);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = e => reject(e.target.error);
+  });
+  if (!file) { addSystemMessage('⚠️ ファイルが見つかりません。'); return; }
+  if (!file.fileType.startsWith('image')) {
+    addSystemMessage('⚠️ 画像ファイルのみ解析できます（JPG・PNG・GIF等）。');
+    return;
+  }
+  if (file.fileSize > 10 * 1024 * 1024) {
+    addSystemMessage('⚠️ 10MBを超える画像は解析できません。');
+    return;
+  }
+
+  // ArrayBuffer → base64
+  const bytes = new Uint8Array(file.data);
+  let binary = '';
+  for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+  const base64 = btoa(binary);
+  const mimeType = file.fileType || 'image/jpeg';
+
+  // プロジェクト名に応じてプロンプトを調整
+  const isCarProject = /車|修理|自動車|アコード|バイク|カー/.test(projectName);
+  const isScreenshot = /スクショ|スクリーン|screenshot|画面/.test(file.fileName.toLowerCase()) ||
+                       /スクショ|スクリーン|screenshot/.test(projectName);
+
+  let prompt = '';
+  if (isCarProject) {
+    prompt = `このプロジェクト「${projectName}」に関連する車の写真です。以下の情報を提供してください：
+1. 写っているもの（部品名・部位）
+2. 状態・劣化度の判断
+3. 修理・交換の優先度（高中低）
+4. 参考価格帯または検索キーワード
+5. その他アドバイス
+簡潔に箇条書きで答えてください。`;
+  } else if (isScreenshot) {
+    prompt = `このスクリーンショットから以下を抽出してください：
+1. 主要なテキスト・タイトル
+2. URL・リンク（あれば）
+3. 重要な数値・情報
+4. プロジェクト「${projectName}」に関連する情報のまとめ
+簡潔に答えてください。`;
+  } else {
+    prompt = `プロジェクト「${projectName}」に関連する画像です。
+1. 写っているものの説明
+2. プロジェクトに役立つ情報・気づき
+3. 関連する検索キーワードや参考情報
+簡潔に答えてください。`;
+  }
+
+  try {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [
+            { text: prompt },
+            { inline_data: { mime_type: mimeType, data: base64 } }
+          ]}],
+          generationConfig: { maxOutputTokens: 1024, thinkingConfig: { thinkingBudget: 0 } }
+        })
+      }
+    );
+    const json = await res.json();
+    if (!res.ok) {
+      addSystemMessage(`⚠️ 画像解析APIエラー: ${json.error?.message || 'HTTPエラー ' + res.status}`);
+      return;
+    }
+    const result = json.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!result) {
+      const reason = json.candidates?.[0]?.finishReason || '不明';
+      addSystemMessage(`⚠️ 画像解析: 結果を取得できませんでした（理由: ${reason}）`);
+      return;
+    }
+
+    addMessage('kitt', `🔍 「${file.fileName}」の解析結果（${projectName}）\n\n${result}`);
+
+    // 解析結果をIndexedDBに保存
+    const tx = _projectDB.transaction('project_files', 'readwrite');
+    const store = tx.objectStore('project_files');
+    const getReq = store.get(fileId);
+    getReq.onsuccess = () => {
+      const rec = getReq.result;
+      if (rec) {
+        rec.aiAnalysis = result;
+        rec.analysisDate = new Date().toISOString();
+        store.put(rec);
+      }
+    };
+  } catch (e) {
+    addSystemMessage(`⚠️ 画像解析エラー: ${e.message}`);
+  }
 }
 
 async function exportProjectForClaudeCode(projectName) {
