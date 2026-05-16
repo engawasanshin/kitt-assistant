@@ -2866,7 +2866,7 @@ function getPromotionSchedule() {
   const saved = localStorage.getItem('kitt_promotion_schedule');
   if (saved) try { return JSON.parse(saved); } catch(e) {}
   return {
-    toeicTarget:   { label: 'TOEIC 600点', date: '2026-06-29', score: 590, target: 600 },
+    toeicTarget:   { label: 'TOEIC 600点', date: '2026-06-28', score: 590, target: 600 },
     aptitudeTest:  { label: '適性検査',    date: '2026-08-01', prepStart: '2026-06-01' },
     selfIntro:     { label: '自己紹介・職歴書提出', date: '2026-10-01', prepStart: '2026-08-01' }
   };
