@@ -2867,7 +2867,7 @@ function getPromotionSchedule() {
   const saved = localStorage.getItem('kitt_promotion_schedule');
   if (saved) try { return JSON.parse(saved); } catch(e) {}
   return {
-    toeicTarget:   { label: 'TOEIC 600点', date: '2026-06-28', score: 590, target: 600 },
+    toeicTarget:   { label: 'TOEIC 600点', date: '2026-06-28', score: 590, target: 600, backup: '2026-07-12' },
     aptitudeTest:  { label: '適性検査',    date: '2026-08-01', prepStart: '2026-06-01' },
     selfIntro:     { label: '自己紹介・職歴書提出', date: '2026-10-01', prepStart: '2026-08-01' }
   };
@@ -2886,7 +2886,8 @@ function getPromotionAdvisorNote() {
     if (diffDays > 0 && diffDays <= 90) {
       const weeks = Math.ceil(diffDays / 7);
       if (key === 'toeicTarget') {
-        notes.push(`📚 TOEIC（${item.score}点→目標${item.target}点）まで約${weeks}週間`);
+        const backupStr = item.backup ? `（保険:${item.backup}）` : '';
+        notes.push(`📚 TOEIC（${item.score}点→目標${item.target}点）6/28まで約${weeks}週間${backupStr}`);
       } else {
         const prepDate = new Date(item.prepStart);
         const isPrepTime = now >= prepDate;
