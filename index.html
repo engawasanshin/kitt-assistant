@@ -1847,6 +1847,7 @@ async function sendMessage() {
     (/に資料|にファイル|にデータ|に追加/.test(_lc) && /追加|入れて|保存/.test(_lc)) ||
     (/プロジェクト/.test(_lc) && /エクスポート|ダウンロード/.test(_lc)) ||
     /写真.*解析|画像.*解析|スクショ.*解析|スクリーンショット.*解析|解析.*写真|解析.*画像/.test(_lc) ||
+    /昇進.*(?:状況|確認|進捗|どう|カリキュラム)|カリキュラム.*見せて|インバスケット.*(?:練習|やって|問題)|マネジメント.*(?:理論|教えて|学習)/.test(_lc) ||
     _naturalAdd ||
     _isNewsQuery
     // ※_isStockQueryはGeminiに流す（会話できるよう）。ウォッチリストはanalyzeAndRecordで自動表示
@@ -2858,6 +2859,97 @@ async function handleRemoveFromWatchlist(ticker) {
   }
 }
 
+// --- 昇進アドバイザー機能 ---
+
+function getPromotionSchedule() {
+  // localStorage に保存されたスケジュールを返す（なければデフォルト）
+  const saved = localStorage.getItem('kitt_promotion_schedule');
+  if (saved) try { return JSON.parse(saved); } catch(e) {}
+  return {
+    toeicTarget:   { label: 'TOEIC 600点', date: '2026-06-29', score: 590, target: 600 },
+    aptitudeTest:  { label: '適性検査',    date: '2026-08-01', prepStart: '2026-06-01' },
+    selfIntro:     { label: '自己紹介・職歴書提出', date: '2026-10-01', prepStart: '2026-08-01' }
+  };
+}
+
+function getPromotionAdvisorNote() {
+  const now = new Date();
+  const sched = getPromotionSchedule();
+  const notes = [];
+
+  // 各イベントまでの残り週数を計算
+  for (const key of ['toeicTarget', 'aptitudeTest', 'selfIntro']) {
+    const item = sched[key];
+    const target = new Date(item.date);
+    const diffDays = Math.ceil((target - now) / (1000 * 60 * 60 * 24));
+    if (diffDays > 0 && diffDays <= 90) {
+      const weeks = Math.ceil(diffDays / 7);
+      if (key === 'toeicTarget') {
+        notes.push(`📚 TOEIC（${item.score}点→目標${item.target}点）まで約${weeks}週間`);
+      } else {
+        const prepDate = new Date(item.prepStart);
+        const isPrepTime = now >= prepDate;
+        notes.push(`🎯 ${item.label}まで約${weeks}週間${isPrepTime ? '（準備期間中）' : ''}`);
+      }
+    } else if (diffDays > 0 && diffDays <= 180) {
+      const months = Math.ceil(diffDays / 30);
+      if (key === 'aptitudeTest') {
+        const prepDate = new Date(item.prepStart);
+        const isPrepTime = now >= prepDate;
+        notes.push(`🎯 ${item.label}まで約${months}ヶ月${isPrepTime ? '（準備開始タイミング！）' : ''}`);
+      }
+    }
+  }
+
+  if (notes.length === 0) return '';
+  return '\n\n🏆 昇進準備：' + notes.join(' / ');
+}
+
+function showPromotionStatus() {
+  const sched = getPromotionSchedule();
+  const now = new Date();
+
+  const lines = ['📋 **昇進準備 現在地レポート**\n'];
+
+  const items = [
+    { key: 'toeicTarget', icon: '📚' },
+    { key: 'aptitudeTest', icon: '🎯' },
+    { key: 'selfIntro', icon: '🗣️' }
+  ];
+
+  for (const { key, icon } of items) {
+    const item = sched[key];
+    const target = new Date(item.date);
+    const diffDays = Math.ceil((target - now) / (1000 * 60 * 60 * 24));
+    const diffStr = diffDays > 0
+      ? `残り約${Math.ceil(diffDays / 7)}週間（${item.date}頃）`
+      : '期日超過';
+
+    if (key === 'toeicTarget') {
+      lines.push(`${icon} **${item.label}**`);
+      lines.push(`  直近スコア: ${item.score}点 → 目標: ${item.target}点（あと${item.target - item.score}点）`);
+      lines.push(`  次回受験: ${diffStr}`);
+      lines.push(`  対策: 時間配分練習・金フレ語彙・公式問題集`);
+    } else {
+      const prepDate = new Date(item.prepStart || item.date);
+      const prepDiff = Math.ceil((prepDate - now) / (1000 * 60 * 60 * 24));
+      const prepStr = prepDiff <= 0 ? '準備開始タイミング！今すぐ始めましょう' : `準備開始まで約${Math.ceil(prepDiff / 7)}週間`;
+      lines.push(`${icon} **${item.label}**`);
+      lines.push(`  ${diffStr}`);
+      lines.push(`  ${prepStr}`);
+    }
+    lines.push('');
+  }
+
+  lines.push('**マネジメント学習テーマ**（随時）');
+  lines.push('  ・リーダーシップ理論（SL理論・PM理論・変革型）');
+  lines.push('  ・インバスケット対策（優先判断・委任・情報整理）');
+  lines.push('  ・自己紹介構成（課題→行動→結果→学び）');
+  lines.push('\n「インバスケット練習して」「マネジメント理論を教えて」と話しかけてください。');
+
+  addMessage('kitt', lines.join('\n'));
+}
+
 // --- Phase 2 Day 6: 自動更新機能 ---
 
 async function checkAndAutoUpdateWatchlist() {
@@ -2884,7 +2976,8 @@ async function checkAndAutoUpdateWatchlist() {
   if (dayOfWeek === 0 || dayOfWeek === 6) {
     const dayName = dayOfWeek === 0 ? '日曜日' : '土曜日';
     const greeting = currentHour < 12 ? 'おはようございます' : currentHour < 18 ? 'こんにちは' : 'こんばんは';
-    addMessage('assistant', `${greeting}、塩川さん。📅 今日は${dayName}のため株式市場はお休みです。ゆっくりお過ごしください！週明けにウォッチリストを更新します。`);
+    const weekendNote = getPromotionAdvisorNote();
+    addMessage('assistant', `${greeting}、塩川さん。📅 今日は${dayName}のため株式市場はお休みです。ゆっくりお過ごしください！週明けにウォッチリストを更新します。${weekendNote}`);
     localStorage.setItem('kitt_watchlist_last_auto_update', today);
     return;
   }
@@ -2942,7 +3035,8 @@ async function checkAndAutoUpdateWatchlist() {
     const weatherStr = weather.status === 'fulfilled' && weather.value ? '\n\n' + formatWeather(weather.value) : '';
     const forexStr = forex.status === 'fulfilled' && forex.value ? '\n' + formatForex(forex.value) : '';
 
-    addMessage('assistant', `${greeting}、塩川さん。📊 ${stockBody}${weatherStr}${forexStr}`);
+    const promotionNote = getPromotionAdvisorNote();
+    addMessage('assistant', `${greeting}、塩川さん。📊 ${stockBody}${weatherStr}${forexStr}${promotionNote}`);
 
     console.log('[Auto Update] 完了:', result.message);
   } catch (err) {
@@ -6988,6 +7082,20 @@ function analyzeAndRecord(text) {
     exportProjectForClaudeCode(_projExport[1].trim());
     return;
   }
+  // === 昇進アドバイザーコマンド ===
+  if (/昇進.*(?:状況|確認|進捗|どう|カリキュラム)|カリキュラム.*見せて/.test(lowerText)) {
+    showPromotionStatus();
+    return;
+  }
+  if (/インバスケット.*(?:練習|やって|問題)/.test(lowerText)) {
+    addMessage('kitt', '📥 インバスケット練習を始めましょう！\n\n**インバスケットとは**: 管理職が一定時間内に多数の案件（メール・報告書・依頼など）を処理する演習です。判断の優先順位付け・委任・意思決定が評価されます。\n\n以下のどれから始めますか？\n① 基本問題（案件の優先順位付け）\n② 部下への委任判断\n③ 緊急 vs 重要の仕分け\n\n「①」「②」「③」と答えるか、「インバスケット①」と話しかけてください。');
+    return;
+  }
+  if (/マネジメント.*(?:理論|教えて|学習)/.test(lowerText)) {
+    addMessage('kitt', '📚 マネジメント理論を解説します！昇進試験でよく問われる主要理論です。\n\n**① SL理論（状況対応型リーダーシップ）**\n部下の習熟度に応じてリーダーシップスタイルを変える。4スタイル：指示型・コーチング型・支援型・委任型\n\n**② PM理論**\nP機能（目標達成・課題解決）とM機能（集団維持・関係性）の2軸で評価。PM型が最も高い成果。\n\n**③ 変革型リーダーシップ**\nビジョンを示し、内発的動機を引き出してチームを変革に導くスタイル。\n\nどれかを深掘りしたい場合は「SL理論を詳しく」等と話しかけてください。');
+    return;
+  }
+
   // 「車修理の写真を解析して」「画像を解析して」
   const _analyzeFile = /^(.+?)(?:の写真|の画像|のスクショ|のスクリーンショット).*(?:解析|分析)/i.exec(text) ||
                        /(?:写真|画像|スクショ|スクリーンショット).*(?:解析|分析).*?(?:「(.+?)」|「(.+?)」)?/i.exec(text);
