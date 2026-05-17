@@ -615,6 +615,23 @@ body {
     </div>
   </div>
 
+  <!-- 📚 英語単語帳（エビングハウス忘却曲線対応） -->
+  <div id="vocabBookArea" style="margin-top:12px;">
+    <div style="font-size:12px;color:#88aaff;margin-bottom:6px;border-bottom:1px solid #1a1a4a;padding-bottom:4px;display:flex;justify-content:space-between;align-items:center;">
+      <span>📚 英語単語帳 <span id="vocabDueBadge" style="font-size:10px;color:#ff8866;display:none;"></span></span>
+      <button onclick="toggleVocabBook()" id="vocabToggleBtn" style="font-size:10px;padding:2px 8px;border:1px solid #2a2a6a;background:#0a0a2a;color:#88aaff;border-radius:4px;cursor:pointer;">▶</button>
+    </div>
+    <div id="vocabBody" style="display:none;">
+      <!-- タブ -->
+      <div style="display:flex;gap:4px;margin-bottom:8px;">
+        <button onclick="showVocabTab('list')" id="vtab-list" style="flex:1;font-size:10px;padding:4px;border:1px solid #2a2a6a;background:#1a1a3a;color:#88aaff;border-radius:4px;cursor:pointer;">📋 一覧</button>
+        <button onclick="showVocabTab('review')" id="vtab-review" style="flex:1;font-size:10px;padding:4px;border:1px solid #2a2a6a;background:#0a0a2a;color:#555;border-radius:4px;cursor:pointer;">🔁 今日の復習</button>
+        <button onclick="showVocabTab('quiz')" id="vtab-quiz" style="flex:1;font-size:10px;padding:4px;border:1px solid #2a2a6a;background:#0a0a2a;color:#555;border-radius:4px;cursor:pointer;">❓ クイズ</button>
+      </div>
+      <div id="vocabContent" style="font-size:11px;color:#ccc;max-height:300px;overflow-y:auto;-webkit-overflow-scrolling:touch;"></div>
+    </div>
+  </div>
+
   <!-- 日々の記録エリア -->
   <div id="dailyLogArea" style="margin-top: 12px; display: none;">
     <div style="font-size: 12px; color: #88aaff; margin-bottom: 6px; border-bottom: 1px solid #2a2a2a; padding-bottom: 4px;">
@@ -1429,6 +1446,19 @@ function getAppStateContext() {
     }
   } catch(e) {}
 
+  // 英語単語帳の状況（KITTへの情報提供）
+  try {
+    const _vb = getVocabBook();
+    if (_vb.length > 0) {
+      const _vDue = getVocabDueToday();
+      ctx += `\n【英語単語帳】登録単語数: ${_vb.length}件 / 今日の復習: ${_vDue.length}件\n`;
+      if (_vDue.length > 0) {
+        ctx += `復習待ち単語: ${_vDue.slice(0,3).map(w => w.word).join('、')}${_vDue.length > 3 ? '...' : ''}\n`;
+        ctx += `⚠️ 今日復習すべき単語があります。会話の中で「単語クイズやってみましょう」と一言添えてください。\n`;
+      }
+    }
+  } catch(e) {}
+
   // 昇進準備・TOEIC進捗（KITTがプロアクティブに声をかけるための情報）
   try {
     const _tp = JSON.parse(localStorage.getItem('kitt_toeic_progress') || '{}');
@@ -1895,6 +1925,9 @@ async function sendMessage() {
     /写真.*解析|画像.*解析|スクショ.*解析|スクリーンショット.*解析|解析.*写真|解析.*画像/.test(_lc) ||
     /昇進.*(?:状況|確認|進捗|どう|カリキュラム)|カリキュラム.*見せて|インバスケット.*(?:練習|やって|問題)|マネジメント.*(?:理論|教えて|学習)/.test(_lc) ||
     /toeic.*(?:対策|カリキュラム|練習|模擬|勉強|計画)|リスニング.*(?:練習|対策|鍛え)|英語.*模擬試験/.test(_lc) ||
+    /単語.*(?:追加|登録|入れて)|.*を単語帳に|vocab.*add/.test(_lc) ||
+    /単語クイズ|クイズ.*出して|単語.*テスト|vocab.*quiz/.test(_lc) ||
+    /単語帳.*(?:見せて|開いて|一覧|リスト)|単語.*一覧/.test(_lc) ||
     _naturalAdd ||
     _isNewsQuery
     // ※_isStockQueryはGeminiに流す（会話できるよう）。ウォッチリストはanalyzeAndRecordで自動表示
@@ -2998,6 +3031,289 @@ function showPromotionStatus() {
   addMessage('kitt', lines.join('\n'));
 }
 
+// ============================================================
+// 📚 英語単語帳（エビングハウス忘却曲線）
+// ============================================================
+
+const VOCAB_INTERVALS = [1, 3, 7, 14, 30]; // 忘却曲線の復習間隔（日数）
+
+function getVocabBook() {
+  try { return JSON.parse(localStorage.getItem('kitt_vocab_book') || '[]'); } catch(e) { return []; }
+}
+function saveVocabBook(book) {
+  localStorage.setItem('kitt_vocab_book', JSON.stringify(book));
+}
+
+function getVocabDueToday() {
+  const today = new Date().toISOString().split('T')[0];
+  return getVocabBook().filter(w => w.nextReviewDate <= today);
+}
+
+// 登録日を基点に次回復習日を計算
+function calcNextReviewDate(level) {
+  const days = VOCAB_INTERVALS[Math.min(level, VOCAB_INTERVALS.length - 1)];
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return d.toISOString().split('T')[0];
+}
+
+// クイズ結果を記録してインターバルを更新
+function recordVocabQuizResult(wordId, correct) {
+  const book = getVocabBook();
+  const w = book.find(x => x.id === wordId);
+  if (!w) return;
+  w.reviewCount = (w.reviewCount || 0) + 1;
+  if (correct) {
+    w.correctCount = (w.correctCount || 0) + 1;
+    w.intervalLevel = Math.min((w.intervalLevel || 0) + 1, VOCAB_INTERVALS.length - 1);
+  } else {
+    w.wrongCount = (w.wrongCount || 0) + 1;
+    w.intervalLevel = 0; // 不正解でリセット
+  }
+  w.nextReviewDate = calcNextReviewDate(w.intervalLevel);
+  w.lastReviewDate = new Date().toISOString().split('T')[0];
+  saveVocabBook(book);
+  trackFeatureUsage('vocab_quiz');
+}
+
+// 単語をGeminiで解析して登録
+async function addVocabWord(word, presetNote) {
+  if (!word) return;
+  const book = getVocabBook();
+  if (book.find(w => w.word.toLowerCase() === word.toLowerCase())) {
+    addMessage('kitt', `📚 「${word}」はすでに単語帳に登録されています。`);
+    return;
+  }
+  addSystemMessage(`📚 「${word}」を単語帳に登録しています...`);
+  const today = new Date().toISOString().split('T')[0];
+
+  let etymology = '', ipa = '', examples = [], memoryHook = '', meaning = '';
+
+  if (apiKey) {
+    try {
+      const prompt = `英語単語・フレーズ「${word}」について、以下をJSON形式で返してください。
+{
+  "meaning": "日本語訳（簡潔に）",
+  "etymology": "語源の説明（日本語・2〜3文）",
+  "ipa": "IPA発音記号",
+  "examples": ["ネイティブ例文1（英語）", "ネイティブ例文2（英語）", "ネイティブ例文3（英語）"],
+  "examples_ja": ["例文1の和訳", "例文2の和訳", "例文3の和訳"],
+  "memoryHook": "日本語学習者向けの覚え方・記憶フック（ユーモアOK・2〜3文）"
+}`;
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { responseMimeType: 'application/json', maxOutputTokens: 1024 }
+        })
+      });
+      const json = await res.json();
+      const raw = json.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+      const parsed = JSON.parse(raw);
+      meaning = parsed.meaning || '';
+      etymology = parsed.etymology || '';
+      ipa = parsed.ipa || '';
+      examples = (parsed.examples || []).map((ex, i) => ({ en: ex, ja: (parsed.examples_ja || [])[i] || '' }));
+      memoryHook = parsed.memoryHook || '';
+    } catch(e) { console.warn('[Vocab] Gemini error:', e); }
+  }
+
+  const entry = {
+    id: `vocab_${Date.now()}`,
+    word,
+    meaning: meaning || presetNote || '',
+    etymology,
+    ipa,
+    examples,
+    memoryHook,
+    fullNote: presetNote || '',
+    registeredDate: today,
+    nextReviewDate: calcNextReviewDate(0),
+    lastReviewDate: null,
+    reviewCount: 0,
+    correctCount: 0,
+    wrongCount: 0,
+    intervalLevel: 0
+  };
+  book.push(entry);
+  saveVocabBook(book);
+  trackFeatureUsage('vocab_quiz');
+
+  const nextStr = calcNextReviewDate(0);
+  let msg = `✅ **「${word}」を単語帳に登録しました！**\n`;
+  if (meaning) msg += `📖 意味: ${meaning}\n`;
+  if (ipa) msg += `🔤 発音: ${ipa}\n`;
+  if (etymology) msg += `🌱 語源: ${etymology}\n`;
+  if (memoryHook) msg += `💡 覚え方: ${memoryHook}\n`;
+  if (examples.length > 0) {
+    msg += `\n**例文**:\n`;
+    examples.forEach((ex, i) => {
+      msg += `${i+1}. ${ex.en}\n   （${ex.ja}）\n`;
+    });
+  }
+  msg += `\n次回の復習: ${nextStr}（明日）\n「単語クイズ」で復習できます。`;
+  addMessage('kitt', msg);
+
+  updateVocabDueBadge();
+}
+
+// 単語帳の表示（タブ: list / review / quiz）
+let _vocabCurrentTab = 'list';
+let _vocabQuizQueue = [];
+let _vocabQuizIdx = 0;
+
+function toggleVocabBook() {
+  const body = document.getElementById('vocabBody');
+  const btn = document.getElementById('vocabToggleBtn');
+  if (!body) return;
+  if (body.style.display === 'none') {
+    body.style.display = 'block';
+    btn.textContent = '▼';
+    showVocabTab(_vocabCurrentTab);
+    trackFeatureUsage('vocab_quiz');
+  } else {
+    body.style.display = 'none';
+    btn.textContent = '▶';
+  }
+}
+
+function showVocabTab(tab) {
+  _vocabCurrentTab = tab;
+  ['list','review','quiz'].forEach(t => {
+    const b = document.getElementById(`vtab-${t}`);
+    if (b) { b.style.background = t === tab ? '#1a1a3a' : '#0a0a2a'; b.style.color = t === tab ? '#88aaff' : '#555'; }
+  });
+  const content = document.getElementById('vocabContent');
+  if (!content) return;
+  if (tab === 'list') renderVocabList(content);
+  else if (tab === 'review') renderVocabReview(content);
+  else if (tab === 'quiz') startVocabQuiz(content);
+}
+
+function renderVocabList(container) {
+  const book = getVocabBook();
+  if (book.length === 0) {
+    container.innerHTML = '<div style="color:#555;text-align:center;padding:20px;">まだ単語が登録されていません。<br>「〇〇を単語帳に追加して」と話しかけてください。</div>';
+    return;
+  }
+  const today = new Date().toISOString().split('T')[0];
+  container.innerHTML = book.map((w, i) => {
+    const isDue = w.nextReviewDate <= today;
+    const level = w.intervalLevel || 0;
+    const nextDays = VOCAB_INTERVALS[Math.min(level, VOCAB_INTERVALS.length - 1)];
+    const mastery = level >= VOCAB_INTERVALS.length - 1 ? '🏆' : '▓'.repeat(level + 1) + '░'.repeat(VOCAB_INTERVALS.length - 1 - level);
+    return `<div style="border-bottom:1px solid #1a1a3a;padding:8px 4px;cursor:pointer;" onclick="toggleVocabDetail(${i})">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <span style="color:${isDue ? '#ff8866' : '#88aaff'};font-weight:bold;">${w.word}</span>
+        <span style="font-size:10px;color:#555;">${mastery} ${w.reviewCount}回</span>
+      </div>
+      <div style="color:#aaa;font-size:10px;">${w.meaning || ''}</div>
+      <div id="vdetail-${i}" style="display:none;margin-top:6px;color:#ccc;font-size:10px;line-height:1.6;">
+        ${w.ipa ? `<div>🔤 ${w.ipa}</div>` : ''}
+        ${w.etymology ? `<div>🌱 ${w.etymology}</div>` : ''}
+        ${w.memoryHook ? `<div>💡 ${w.memoryHook}</div>` : ''}
+        ${(w.examples || []).map((ex, ei) => `<div>${ei+1}. ${ex.en || ex}<br><span style="color:#888;">　${ex.ja || ''}</span></div>`).join('')}
+        <div style="margin-top:4px;color:#555;">登録: ${w.registeredDate} / 次回: ${w.nextReviewDate}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function toggleVocabDetail(idx) {
+  const d = document.getElementById(`vdetail-${idx}`);
+  if (d) d.style.display = d.style.display === 'none' ? 'block' : 'none';
+}
+
+function renderVocabReview(container) {
+  const due = getVocabDueToday();
+  if (due.length === 0) {
+    container.innerHTML = '<div style="color:#88cc88;text-align:center;padding:20px;">今日の復習はありません。よくできました！ 🎉</div>';
+    return;
+  }
+  container.innerHTML = `<div style="color:#ff8866;margin-bottom:8px;">今日復習すべき単語: ${due.length}件</div>` +
+    due.map((w, i) => `<div style="border-bottom:1px solid #1a1a3a;padding:8px 4px;">
+      <div style="color:#ff8866;font-weight:bold;">${w.word}</div>
+      <div style="color:#aaa;font-size:10px;">${w.meaning || ''} / 登録日: ${w.registeredDate}</div>
+      <div style="display:flex;gap:4px;margin-top:4px;">
+        <button onclick="recordVocabQuizResult('${w.id}',true);showVocabTab('review')" style="flex:1;font-size:10px;padding:3px;background:#1a3a1a;color:#88cc88;border:1px solid #2a6a2a;border-radius:4px;cursor:pointer;">✅ 覚えた</button>
+        <button onclick="recordVocabQuizResult('${w.id}',false);showVocabTab('review')" style="flex:1;font-size:10px;padding:3px;background:#3a1a1a;color:#cc8888;border:1px solid #6a2a2a;border-radius:4px;cursor:pointer;">❌ 忘れた</button>
+      </div>
+    </div>`).join('');
+}
+
+function startVocabQuiz(container) {
+  const book = getVocabBook();
+  const today = new Date().toISOString().split('T')[0];
+  // 今日の復習単語 → なければ全単語からランダム
+  let queue = book.filter(w => w.nextReviewDate <= today);
+  if (queue.length === 0) queue = [...book].sort(() => Math.random() - 0.5).slice(0, 5);
+  if (queue.length === 0) {
+    container.innerHTML = '<div style="color:#555;text-align:center;padding:20px;">単語を登録してからクイズを始めましょう。</div>';
+    return;
+  }
+  _vocabQuizQueue = queue.sort(() => Math.random() - 0.5);
+  _vocabQuizIdx = 0;
+  renderVocabQuizCard(container);
+}
+
+function renderVocabQuizCard(container) {
+  if (_vocabQuizIdx >= _vocabQuizQueue.length) {
+    container.innerHTML = `<div style="text-align:center;padding:20px;color:#88cc88;">🎉 クイズ完了！<br>${_vocabQuizQueue.length}問終わりました。<br><button onclick="startVocabQuiz(document.getElementById('vocabContent'))" style="margin-top:8px;font-size:11px;padding:4px 12px;background:#1a1a3a;color:#88aaff;border:1px solid #2a2a6a;border-radius:4px;cursor:pointer;">もう一度</button></div>`;
+    return;
+  }
+  const w = _vocabQuizQueue[_vocabQuizIdx];
+  const progress = `${_vocabQuizIdx + 1} / ${_vocabQuizQueue.length}`;
+  container.innerHTML = `
+    <div style="text-align:center;padding:12px;">
+      <div style="color:#555;font-size:10px;margin-bottom:8px;">${progress}</div>
+      <div style="font-size:18px;color:#88aaff;font-weight:bold;margin-bottom:4px;">${w.word}</div>
+      ${w.ipa ? `<div style="font-size:11px;color:#555;margin-bottom:12px;">${w.ipa}</div>` : '<div style="margin-bottom:12px;"></div>'}
+      <button onclick="document.getElementById('vocabAnswer').style.display='block';this.style.display='none';" style="font-size:12px;padding:6px 20px;background:#1a1a3a;color:#88aaff;border:1px solid #2a2a6a;border-radius:6px;cursor:pointer;">答えを見る</button>
+      <div id="vocabAnswer" style="display:none;margin-top:12px;">
+        <div style="color:#fff;font-size:14px;margin-bottom:4px;">${w.meaning || ''}</div>
+        ${w.memoryHook ? `<div style="color:#888;font-size:10px;margin-bottom:8px;">💡 ${w.memoryHook}</div>` : ''}
+        ${(w.examples || []).slice(0,1).map(ex => `<div style="color:#aaa;font-size:10px;text-align:left;padding:4px;background:#111;border-radius:4px;margin-bottom:8px;">${ex.en || ex}<br><span style="color:#666;">${ex.ja || ''}</span></div>`).join('')}
+        <div style="display:flex;gap:8px;margin-top:8px;">
+          <button onclick="_vocabQuizIdx++;recordVocabQuizResult('${w.id}',false);renderVocabQuizCard(document.getElementById('vocabContent'))" style="flex:1;padding:6px;background:#3a1a1a;color:#cc8888;border:1px solid #6a2a2a;border-radius:6px;cursor:pointer;">❌ 忘れた</button>
+          <button onclick="_vocabQuizIdx++;recordVocabQuizResult('${w.id}',true);renderVocabQuizCard(document.getElementById('vocabContent'))" style="flex:1;padding:6px;background:#1a3a1a;color:#88cc88;border:1px solid #2a6a2a;border-radius:6px;cursor:pointer;">✅ 覚えた</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function updateVocabDueBadge() {
+  const due = getVocabDueToday();
+  const badge = document.getElementById('vocabDueBadge');
+  if (!badge) return;
+  if (due.length > 0) {
+    badge.textContent = `復習${due.length}件`;
+    badge.style.display = 'inline';
+  } else {
+    badge.style.display = 'none';
+  }
+}
+
+// 単語帳をチャットから表示
+function showVocabBook() {
+  const body = document.getElementById('vocabBody');
+  const area = document.getElementById('vocabBookArea');
+  if (area) area.scrollIntoView({ behavior: 'smooth' });
+  if (body && body.style.display === 'none') toggleVocabBook();
+  else showVocabTab('list');
+  trackFeatureUsage('vocab_quiz');
+}
+
+function showVocabQuizFromChat() {
+  const body = document.getElementById('vocabBody');
+  const area = document.getElementById('vocabBookArea');
+  if (area) area.scrollIntoView({ behavior: 'smooth' });
+  if (body && body.style.display === 'none') toggleVocabBook();
+  showVocabTab('quiz');
+  trackFeatureUsage('vocab_quiz');
+}
+
+// ============================================================
 // === 機能使用状況の追跡（プロアクティブリマインド用） ===
 
 // 機能定義: key, label, hint（KITTが会話に自然に挟む一言）, threshold（日数）, priority（低い方が重要）
@@ -3011,6 +3327,7 @@ const KITT_FEATURES = [
   { key: 'inbasket',          label: 'インバスケット練習',  hint: 'インバスケット練習、最近できていますか？5〜10分でできる問題もありますよ。',                              threshold: 14, priority: 2 },
   { key: 'management_theory', label: 'マネジメント理論',    hint: 'マネジメント理論、少し復習してみましょうか？試験対策に役立ちます。',                                    threshold: 21, priority: 4 },
   { key: 'promotion_check',   label: '昇進準備確認',        hint: '昇進準備の全体像、最近確認しましたか？「昇進状況」で現在地をチェックできます。',                          threshold: 7,  priority: 2 },
+  { key: 'vocab_quiz',        label: '英語単語クイズ',       hint: '英語単語帳のクイズ、最近やりましたか？「単語クイズ」で復習できます。',                                     threshold: 2,  priority: 1 },
 ];
 
 // 機能使用日を記録
@@ -7223,6 +7540,23 @@ function analyzeAndRecord(text) {
     addMessage('kitt', '📚 マネジメント理論を解説します！昇進試験でよく問われる主要理論です。\n\n**① SL理論（状況対応型リーダーシップ）**\n部下の習熟度に応じてリーダーシップスタイルを変える。4スタイル：指示型・コーチング型・支援型・委任型\n\n**② PM理論**\nP機能（目標達成・課題解決）とM機能（集団維持・関係性）の2軸で評価。PM型が最も高い成果。\n\n**③ 変革型リーダーシップ**\nビジョンを示し、内発的動機を引き出してチームを変革に導くスタイル。\n\nどれかを深掘りしたい場合は「SL理論を詳しく」等と話しかけてください。');
     return;
   }
+  // === 英語単語帳コマンド ===
+  // 「〇〇を単語帳に追加して」
+  const _vocabAdd = /(.+?)を単語帳に(?:追加|登録)/i.exec(text) ||
+                    /単語帳に(.+?)を(?:追加|登録)/i.exec(text) ||
+                    /「(.+?)」を(?:単語帳に|英単語として)(?:追加|登録)/i.exec(text) ||
+                    /(.+?)(?:という単語|という言葉|という英語).*(?:追加|登録)/i.exec(text);
+  if (_vocabAdd) {
+    const wordToAdd = (_vocabAdd[1] || '').trim().replace(/[「」""]/g, '');
+    if (wordToAdd) { addVocabWord(wordToAdd); return; }
+  }
+  if (/単語クイズ|クイズ.*出して|単語.*テスト/.test(lowerText)) {
+    showVocabQuizFromChat(); return;
+  }
+  if (/単語帳.*(?:見せて|開いて|一覧|リスト)|単語.*一覧/.test(lowerText)) {
+    showVocabBook(); return;
+  }
+
   // === TOEIC学習記録の自動検出 ===
   // 「Part3やりました」「TOEIC勉強した」「英語練習した」など
   {
@@ -8982,6 +9316,35 @@ document.addEventListener('DOMContentLoaded', () => {
   console.log('[DEBUG] Current API usage:', getApiUsage());
 
   updateDashboard();
+  // 初回起動時: 最初の単語「sales representative」を自動登録
+  (function() {
+    const book = getVocabBook();
+    if (book.length === 0) {
+      const firstWord = {
+        id: 'vocab_init_1',
+        word: 'sales representative',
+        meaning: '販売員・営業担当者',
+        etymology: '「sales（販売）」+「representative（代表する人）」。representは「代表する」、-ativeは「～する人」を意味する接尾辞。直訳すると「販売を代表する人」→営業担当者。',
+        ipa: '/ˈseɪlz ˌrɛprɪˈzɛntətɪv/',
+        examples: [
+          { en: 'Our sales representative will contact you shortly.', ja: '弊社の営業担当者がまもなくご連絡いたします。' },
+          { en: 'She works as a sales representative for a pharmaceutical company.', ja: '彼女は製薬会社の販売員として働いています。' },
+          { en: 'The sales representative demonstrated the new product features.', ja: 'その販売員は新製品の機能を実演しました。' }
+        ],
+        memoryHook: '「セール（sales）の代表（representative）」→セールの看板を持って立っている販売員さんをイメージしよう。representativeは長いが「re-present-ative」と分解すると覚えやすい。',
+        fullNote: '2026-05-17 TOEIC公式問題集12で間違えた単語。正解は「販売員・営業担当者」なのに、偉い人（役職）と誤解した。',
+        registeredDate: '2026-05-17',
+        nextReviewDate: '2026-05-18',
+        lastReviewDate: null,
+        reviewCount: 0,
+        correctCount: 0,
+        wrongCount: 0,
+        intervalLevel: 0
+      };
+      saveVocabBook([firstWord]);
+    }
+  })();
+  updateVocabDueBadge();
   updateClock();
   // 1分ごとにダッシュボード更新
   setInterval(updateDashboard, 60000);
