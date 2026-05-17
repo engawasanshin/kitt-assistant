@@ -1455,6 +1455,26 @@ function getAppStateContext() {
     ctx += `【KITTへの指示】上記の残り週数・学習状況を把握し、会話の中で自然に昇進準備に触れること。3日以上空いていたら「今日少しだけでもどうですか？」と一言添える。責めない・短く・具体的に。\n`;
   } catch(e) {}
 
+  // プロアクティブリマインド（未使用機能を1〜2件、会話に自然に挟む）
+  try {
+    const _hints = getProactiveHints();
+    if (_hints.length > 0) {
+      // 今日の日付ベースで対象をローテーション（毎日違うものを）
+      const _dayIdx = Math.floor(Date.now() / (1000*60*60*24));
+      const _pick = _hints[_dayIdx % _hints.length];
+      ctx += '\n【今日のプロアクティブリマインド（KITTへの指示）】\n';
+      ctx += `機能「${_pick.label}」が${_pick.daysSince === 999 ? 'まだ一度も使われていません' : `${_pick.daysSince}日間使われていません`}。\n`;
+      ctx += `会話の流れが自然な場面で、さりげなく一言添えてください: 「${_pick.hint}」\n`;
+      ctx += '（無理に話題を変えない。今の会話の延長で出せる場面があれば。責めない・短く。）\n';
+      if (_hints.length >= 2) {
+        const _pick2 = _hints[(_dayIdx + 1) % _hints.length];
+        if (_pick2.key !== _pick.key) {
+          ctx += `サブ候補: 「${_pick2.label}」も${_pick2.daysSince === 999 ? '未使用' : `${_pick2.daysSince}日未使用`}。余裕があれば触れてもOK。\n`;
+        }
+      }
+    }
+  } catch(e) {}
+
   // 重要な制約
   ctx += '\n【データ参照ルール（アーキテクチャ原則）】\n';
   ctx += '- KITTはマスターインターフェース。サブウインドウはKITTに従属する視覚補助。\n';
@@ -2978,6 +2998,45 @@ function showPromotionStatus() {
   addMessage('kitt', lines.join('\n'));
 }
 
+// === 機能使用状況の追跡（プロアクティブリマインド用） ===
+
+// 機能定義: key, label, hint（KITTが会話に自然に挟む一言）, threshold（日数）, priority（低い方が重要）
+// ※ toeic_study はgetAppStateContext()で詳細管理しているためここには含めない
+const KITT_FEATURES = [
+  { key: 'health_vital',      label: '体重・バイタル記録',  hint: '最近の体調はどうですか？体重記録が続いていないようです。「体重〇〇kg」と教えてもらえれば記録しますよ。', threshold: 3,  priority: 1 },
+  { key: 'health_face',       label: '顔色診断',           hint: '顔色診断、試してみませんか？写真を撮るだけでAIが体調をチェックします。',                               threshold: 7,  priority: 3 },
+  { key: 'project_manage',    label: 'プロジェクト管理',    hint: '進行中のプロジェクト、最近どうですか？「プロジェクト一覧」で現状を確認できますよ。',                     threshold: 7,  priority: 2 },
+  { key: 'project_journal',   label: 'プロジェクト日誌',    hint: 'プロジェクト日誌に記録しておきたいことはありますか？作業メモや気づきをその場で残せます。',                  threshold: 7,  priority: 3 },
+  { key: 'project_photo',     label: '画像・写真解析',      hint: 'プロジェクトに写真やスクショを追加してAI解析できますよ。気になる画像はありますか？',                      threshold: 14, priority: 4 },
+  { key: 'inbasket',          label: 'インバスケット練習',  hint: 'インバスケット練習、最近できていますか？5〜10分でできる問題もありますよ。',                              threshold: 14, priority: 2 },
+  { key: 'management_theory', label: 'マネジメント理論',    hint: 'マネジメント理論、少し復習してみましょうか？試験対策に役立ちます。',                                    threshold: 21, priority: 4 },
+  { key: 'promotion_check',   label: '昇進準備確認',        hint: '昇進準備の全体像、最近確認しましたか？「昇進状況」で現在地をチェックできます。',                          threshold: 7,  priority: 2 },
+];
+
+// 機能使用日を記録
+function trackFeatureUsage(key) {
+  const usage = JSON.parse(localStorage.getItem('kitt_feature_usage') || '{}');
+  usage[key] = new Date().toISOString().split('T')[0];
+  localStorage.setItem('kitt_feature_usage', JSON.stringify(usage));
+}
+
+// 未使用（閾値超え）の機能リストを返す（priority昇順）
+function getProactiveHints() {
+  const usage = JSON.parse(localStorage.getItem('kitt_feature_usage') || '{}');
+  const today = new Date();
+  const overdue = [];
+  for (const f of KITT_FEATURES) {
+    const lastUsed = usage[f.key];
+    const daysSince = lastUsed
+      ? Math.floor((today - new Date(lastUsed)) / (1000 * 60 * 60 * 24))
+      : 999;
+    if (daysSince >= f.threshold) {
+      overdue.push({ ...f, daysSince });
+    }
+  }
+  return overdue.sort((a, b) => a.priority - b.priority || b.daysSince - a.daysSince);
+}
+
 // TOEIC学習記録を保存する関数
 function recordToeicStudy(partLabel) {
   const today = new Date().toISOString().split('T')[0];
@@ -3004,6 +3063,7 @@ function recordToeicStudy(partLabel) {
   if (tp.history.length > 30) tp.history = tp.history.slice(0, 30);
 
   localStorage.setItem('kitt_toeic_progress', JSON.stringify(tp));
+  trackFeatureUsage('toeic_study');
 
   const exam = new Date('2026-06-28');
   const weeksLeft = Math.ceil((exam - now) / (1000 * 60 * 60 * 24 * 7));
@@ -3842,6 +3902,7 @@ async function analyzeFace(dateKey) {
     const scoreMatch = result.match(/体調スコア[：:]\s*(\d+)\s*\/\s*10/);
     const aiScore = scoreMatch ? parseInt(scoreMatch[1]) : null;
     const scoreBar = aiScore !== null ? ` 🤖${aiScore}/10` : '';
+    trackFeatureUsage('health_face');
     addMessage('kitt', `📸 顔色診断（${dateKey}）${scoreBar}\n\n${result}`);
     // 分析結果をphotoレコードに保存
     const photos = getFacePhotos();
@@ -7123,12 +7184,14 @@ function analyzeAndRecord(text) {
   }
   // 「プロジェクト一覧」
   if (/プロジェクト.*(?:一覧|リスト|見せて|確認)/.test(lowerText)) {
+    trackFeatureUsage('project_manage');
     showProjectList();
     return;
   }
   // 「車修理の資料を見せて」
   const _projView = /^(.+?)(?:の資料|のファイル|のデータ).*(?:見せて|確認|一覧)/i.exec(text);
   if (_projView) {
+    trackFeatureUsage('project_manage');
     showProjectFiles(_projView[1].trim());
     return;
   }
@@ -7146,14 +7209,17 @@ function analyzeAndRecord(text) {
   }
   // === 昇進アドバイザーコマンド ===
   if (/昇進.*(?:状況|確認|進捗|どう|カリキュラム)|カリキュラム.*見せて/.test(lowerText)) {
+    trackFeatureUsage('promotion_check');
     showPromotionStatus();
     return;
   }
   if (/インバスケット.*(?:練習|やって|問題)/.test(lowerText)) {
+    trackFeatureUsage('inbasket');
     addMessage('kitt', '📥 インバスケット練習を始めましょう！\n\n**インバスケットとは**: 管理職が一定時間内に多数の案件（メール・報告書・依頼など）を処理する演習です。判断の優先順位付け・委任・意思決定が評価されます。\n\n以下のどれから始めますか？\n① 基本問題（案件の優先順位付け）\n② 部下への委任判断\n③ 緊急 vs 重要の仕分け\n\n「①」「②」「③」と答えるか、「インバスケット①」と話しかけてください。');
     return;
   }
   if (/マネジメント.*(?:理論|教えて|学習)/.test(lowerText)) {
+    trackFeatureUsage('management_theory');
     addMessage('kitt', '📚 マネジメント理論を解説します！昇進試験でよく問われる主要理論です。\n\n**① SL理論（状況対応型リーダーシップ）**\n部下の習熟度に応じてリーダーシップスタイルを変える。4スタイル：指示型・コーチング型・支援型・委任型\n\n**② PM理論**\nP機能（目標達成・課題解決）とM機能（集団維持・関係性）の2軸で評価。PM型が最も高い成果。\n\n**③ 変革型リーダーシップ**\nビジョンを示し、内発的動機を引き出してチームを変革に導くスタイル。\n\nどれかを深掘りしたい場合は「SL理論を詳しく」等と話しかけてください。');
     return;
   }
@@ -7189,6 +7255,7 @@ function analyzeAndRecord(text) {
   const _analyzeFile = /^(.+?)(?:の写真|の画像|のスクショ|のスクリーンショット).*(?:解析|分析)/i.exec(text) ||
                        /(?:写真|画像|スクショ|スクリーンショット).*(?:解析|分析).*?(?:「(.+?)」|「(.+?)」)?/i.exec(text);
   if (/写真.*解析|画像.*解析|スクショ.*解析|スクリーンショット.*解析|解析.*写真|解析.*画像/.test(lowerText)) {
+    trackFeatureUsage('project_photo');
     const projectName = (_analyzeFile && (_analyzeFile[1] || _analyzeFile[2] || _analyzeFile[3]) || '').trim();
     if (projectName) {
       // プロジェクト名が指定された場合: そのプロジェクトのファイル一覧を表示して解析ボタンを案内
@@ -7205,10 +7272,12 @@ function analyzeAndRecord(text) {
   // 「車修理の日誌を見せて」
   const _journalView = /^(.+?)(?:の日誌|のジャーナル).*(?:見せて|確認|開いて|表示)/i.exec(text);
   if (_journalView) {
+    trackFeatureUsage('project_journal');
     showProjectJournal(_journalView[1].trim());
     return;
   }
   if (/(?:日誌|ジャーナル).*(?:見せて|確認|開いて|表示)/.test(lowerText) && _activeJournalProject) {
+    trackFeatureUsage('project_journal');
     showProjectJournal(_activeJournalProject);
     return;
   }
@@ -8253,6 +8322,7 @@ function analyzeAndRecord(text) {
     const kg = parseFloat(_weightMatch[1] || _weightMatch[2]);
     if (kg > 30 && kg < 200) {
       saveWeight(kg);
+      trackFeatureUsage('health_vital');
       const log = getWeightHistory(7).filter(d => d.kg !== null);
       const prev = log.length >= 2 ? log[log.length - 2].kg : null;
       const diffStr = prev ? `（前回比 ${kg > prev ? '+' : ''}${(kg - prev).toFixed(1)}kg）` : '';
