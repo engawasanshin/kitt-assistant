@@ -9435,33 +9435,96 @@ document.addEventListener('DOMContentLoaded', () => {
   console.log('[DEBUG] Current API usage:', getApiUsage());
 
   updateDashboard();
-  // 初回起動時: 最初の単語「sales representative」を自動登録
+  // 初期単語を登録（未登録のものだけ追加・ログから確認した5語）
   (function() {
-    const book = getVocabBook();
-    if (book.length === 0) {
-      const firstWord = {
+    const _initWords = [
+      {
         id: 'vocab_init_1',
         word: 'sales representative',
         meaning: '販売員・営業担当者',
-        etymology: '「sales（販売）」+「representative（代表する人）」。representは「代表する」、-ativeは「～する人」を意味する接尾辞。直訳すると「販売を代表する人」→営業担当者。',
+        etymology: '「sales（販売）」+「representative（代表する人）」。representは「代表する」、-ativeは「～する人」を意味する接尾辞。',
         ipa: '/ˈseɪlz ˌrɛprɪˈzɛntətɪv/',
         examples: [
           { en: 'Our sales representative will contact you shortly.', ja: '弊社の営業担当者がまもなくご連絡いたします。' },
           { en: 'She works as a sales representative for a pharmaceutical company.', ja: '彼女は製薬会社の販売員として働いています。' },
           { en: 'The sales representative demonstrated the new product features.', ja: 'その販売員は新製品の機能を実演しました。' }
         ],
-        memoryHook: '「セール（sales）の代表（representative）」→セールの看板を持って立っている販売員さんをイメージしよう。representativeは長いが「re-present-ative」と分解すると覚えやすい。',
-        fullNote: '2026-05-17 TOEIC公式問題集12で間違えた単語。正解は「販売員・営業担当者」なのに、偉い人（役職）と誤解した。',
-        registeredDate: '2026-05-17',
-        nextReviewDate: '2026-05-18',
-        lastReviewDate: null,
-        reviewCount: 0,
-        correctCount: 0,
-        wrongCount: 0,
-        intervalLevel: 0
-      };
-      saveVocabBook([firstWord]);
-    }
+        memoryHook: '「セール（sales）の代表（representative）」→セールの看板を持って立っている販売員さんをイメージ。re-present-ativeと分解すると覚えやすい。',
+        fullNote: '2026-05-17 TOEIC公式問題集12で間違えた単語。偉い役職と誤解した。',
+        registeredDate: '2026-05-17', nextReviewDate: '2026-05-18', lastReviewDate: null, reviewCount: 0, correctCount: 0, wrongCount: 0, intervalLevel: 0
+      },
+      {
+        id: 'vocab_init_2',
+        word: 'groceries',
+        meaning: '食料雑貨類・食料品',
+        etymology: '中世ラテン語の"grossarius"（卸売業者）に由来。「まとめて扱う品物」→「食料品」を指すようになった。',
+        ipa: '/ˈɡroʊsəriz/',
+        examples: [
+          { en: 'I need to go to the supermarket to buy some groceries.', ja: '食料品を買いにスーパーに行かないといけない。' },
+          { en: 'She always makes a list before she goes grocery shopping.', ja: '彼女はいつも食料品の買い物前にリストを作る。' },
+          { en: 'The price of groceries has increased significantly this year.', ja: '今年、食料品の価格が大幅に上昇した。' }
+        ],
+        memoryHook: '「グロサリーストア」=食料品店。その店で売っているものがgroceries。グロ（ー）サリーズと覚えよう。',
+        fullNote: '2026-05-17 KITTとの会話で登録。',
+        registeredDate: '2026-05-17', nextReviewDate: '2026-05-18', lastReviewDate: null, reviewCount: 0, correctCount: 0, wrongCount: 0, intervalLevel: 0
+      },
+      {
+        id: 'vocab_init_3',
+        word: 'appliances',
+        meaning: '家電製品・家庭用電化製品',
+        etymology: '"apply"（応用する）に由来。生活に応用される機械→家電製品。複数形で使われることが多い。',
+        ipa: '/əˈplaɪənsɪz/',
+        examples: [
+          { en: 'We bought some new kitchen appliances, like a refrigerator and a microwave.', ja: '冷蔵庫や電子レンジなど、新しいキッチン家電をいくつか買いました。' },
+          { en: 'Energy-efficient appliances can help you save money on your electricity bill.', ja: '省エネ家電は、電気代の節約に役立ちます。' },
+          { en: 'The store sells a wide range of household appliances.', ja: 'その店は幅広い家庭用電化製品を販売しています。' }
+        ],
+        memoryHook: '「アプライ（apply）=応用する」→生活に応用する機械=家電。applyからapplianceと派生させて覚える。',
+        fullNote: '2026-05-17 KITTとの会話で登録。',
+        registeredDate: '2026-05-17', nextReviewDate: '2026-05-18', lastReviewDate: null, reviewCount: 0, correctCount: 0, wrongCount: 0, intervalLevel: 0
+      },
+      {
+        id: 'vocab_init_4',
+        word: 'Introduce a new line of products',
+        meaning: '新シリーズの製品を発売する',
+        etymology: 'introduce=「世に紹介する」→「発売する」。line of products=「製品のラインナップ・シリーズ」。',
+        ipa: '/ˌɪntrəˈduːs ə nuː laɪn əv ˈprɒdʌkts/',
+        examples: [
+          { en: 'The company plans to introduce a new line of products next quarter.', ja: 'その会社は来四半期に新シリーズの製品を発売する予定です。' },
+          { en: 'At the exhibition, they will introduce a new line of products for eco-conscious consumers.', ja: '展示会では、環境意識の高い消費者向けの新シリーズを発売します。' },
+          { en: 'We are excited to introduce a new line of products combining advanced technology with sleek design.', ja: '先進技術と洗練されたデザインを組み合わせた新シリーズを発売できることを嬉しく思います。' }
+        ],
+        memoryHook: '「人を世に紹介する（introduce）」→「製品を世に出す=発売する」。line of products=製品の列=シリーズ。',
+        fullNote: '2026-05-17 KITTとの会話で登録。TOEIC Part3/4のビジネス表現。',
+        registeredDate: '2026-05-17', nextReviewDate: '2026-05-18', lastReviewDate: null, reviewCount: 0, correctCount: 0, wrongCount: 0, intervalLevel: 0
+      },
+      {
+        id: 'vocab_init_5',
+        word: 'Open a new location',
+        meaning: '新店舗をオープンする・新しい拠点を設ける',
+        etymology: 'open=「開設する」（ビジネスでは「開店する」の意）。location=場所・店舗・拠点。',
+        ipa: '/ˈoʊpən ə nuː loʊˈkeɪʃən/',
+        examples: [
+          { en: 'The coffee shop plans to open a new location in Shibuya next month.', ja: 'そのコーヒーショップは来月、渋谷に新店舗をオープンする予定です。' },
+          { en: 'Expanding our business means we need to open a new location overseas.', ja: '事業を拡大するには、海外に新しい拠点を設ける必要があります。' },
+          { en: 'They decided to open a new location downtown to attract more customers.', ja: '彼らはより多くの顧客を惹きつけるため、ダウンタウンに新店舗を開くことを決めた。' }
+        ],
+        memoryHook: '「open=開く」+「location=場所」→「新しい場所を開く」=新店舗オープン。シンプルに直訳でOK。',
+        fullNote: '2026-05-17 KITTとの会話で登録。TOEIC Part3/4のビジネス表現。',
+        registeredDate: '2026-05-17', nextReviewDate: '2026-05-18', lastReviewDate: null, reviewCount: 0, correctCount: 0, wrongCount: 0, intervalLevel: 0
+      }
+    ];
+    const book = getVocabBook();
+    const existingIds = new Set(book.map(w => w.id));
+    const existingWords = new Set(book.map(w => w.word.toLowerCase()));
+    let added = false;
+    _initWords.forEach(w => {
+      if (!existingIds.has(w.id) && !existingWords.has(w.word.toLowerCase())) {
+        book.push(w);
+        added = true;
+      }
+    });
+    if (added) saveVocabBook(book);
   })();
   updateVocabDueBadge();
   updateClock();
