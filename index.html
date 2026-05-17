@@ -1925,8 +1925,10 @@ async function sendMessage() {
     /写真.*解析|画像.*解析|スクショ.*解析|スクリーンショット.*解析|解析.*写真|解析.*画像/.test(_lc) ||
     /昇進.*(?:状況|確認|進捗|どう|カリキュラム)|カリキュラム.*見せて|インバスケット.*(?:練習|やって|問題)|マネジメント.*(?:理論|教えて|学習)/.test(_lc) ||
     /toeic.*(?:対策|カリキュラム|練習|模擬|勉強|計画)|リスニング.*(?:練習|対策|鍛え)|英語.*模擬試験/.test(_lc) ||
-    /単語.*(?:追加|登録|入れて)|.*を単語帳に|vocab.*add/.test(_lc) ||
-    /単語クイズ|クイズ.*出して|単語.*テスト|vocab.*quiz/.test(_lc) ||
+    (/単語/.test(_lc) && /追加|登録|入れて|覚えて/.test(_lc)) ||
+    /単語帳に|を単語帳/.test(_lc) ||
+    (/[a-z]{3,}/.test(_lc) && /単語帳|単語として|英単語として/.test(_lc)) ||
+    /単語クイズ|クイズ.*出して|単語.*テスト/.test(_lc) ||
     /単語帳.*(?:見せて|開いて|一覧|リスト)|単語.*一覧/.test(_lc) ||
     _naturalAdd ||
     _isNewsQuery
@@ -1958,6 +1960,8 @@ async function sendMessage() {
     chatHistory.push({ role: 'kitt', text: response, timestamp: new Date().toISOString() });
     saveHistory();
     updateExportButtonUI(); // Update export button badge
+    // KITTが「単語帳に登録」と言ったら、ユーザーのメッセージから英単語を抽出して実際に登録する
+    interceptVocabRegistration(text, response);
     // 日誌記録中なら自動保存
     if (_activeJournalProject) {
       addJournalEntry(_activeJournalProject, text, 'user').catch(() => {});
@@ -3074,6 +3078,29 @@ function recordVocabQuizResult(wordId, correct) {
   w.lastReviewDate = new Date().toISOString().split('T')[0];
   saveVocabBook(book);
   trackFeatureUsage('vocab_quiz');
+}
+
+// KITTがGemini応答で「単語帳に登録」と言ったら、ユーザーメッセージから英単語を抽出して実際に保存
+function interceptVocabRegistration(userText, kittResponse) {
+  // KITTの返答に「単語帳」+「登録/追加/保存」が含まれているか
+  if (!/単語帳/.test(kittResponse)) return;
+  if (!/登録|追加|保存|記録|入れ/.test(kittResponse)) return;
+
+  // ユーザーのメッセージから英語フレーズを抽出（2文字以上の英単語/フレーズ）
+  const englishMatches = userText.match(/[A-Za-z][A-Za-z\s'\-]{1,50}[A-Za-z]/g) || [];
+  if (englishMatches.length === 0) return;
+
+  // 一番長い英語フレーズを単語として採用
+  const word = englishMatches.sort((a, b) => b.length - a.length)[0].trim();
+  if (!word || word.length < 2) return;
+
+  // すでに登録済みならスキップ
+  const book = getVocabBook();
+  if (book.find(w => w.word.toLowerCase() === word.toLowerCase())) return;
+
+  // 実際に登録（KITTがGeminiで解説を生成済みの場合はそれを活用）
+  console.log('[Vocab] インターセプト登録:', word);
+  addVocabWord(word, `KITTとの会話で登録 (${new Date().toLocaleDateString('ja-JP')})`);
 }
 
 // 単語をGeminiで解析して登録
@@ -7541,14 +7568,28 @@ function analyzeAndRecord(text) {
     return;
   }
   // === 英語単語帳コマンド ===
-  // 「〇〇を単語帳に追加して」
-  const _vocabAdd = /(.+?)を単語帳に(?:追加|登録)/i.exec(text) ||
-                    /単語帳に(.+?)を(?:追加|登録)/i.exec(text) ||
-                    /「(.+?)」を(?:単語帳に|英単語として)(?:追加|登録)/i.exec(text) ||
-                    /(.+?)(?:という単語|という言葉|という英語).*(?:追加|登録)/i.exec(text);
-  if (_vocabAdd) {
-    const wordToAdd = (_vocabAdd[1] || '').trim().replace(/[「」""]/g, '');
-    if (wordToAdd) { addVocabWord(wordToAdd); return; }
+  // 「〇〇を単語帳に追加/入れて」「単語帳に〇〇を」「〇〇という単語を登録」「〇〇を覚えて/登録して」
+  const _vocabAdd = /(.+?)を単語帳に(?:追加|登録|入れて?)/i.exec(text) ||
+                    /単語帳に(.+?)を(?:追加|登録|入れて?)/i.exec(text) ||
+                    /「(.+?)」を?(?:単語帳に|英単語として|単語として)(?:追加|登録|入れて?)/i.exec(text) ||
+                    /(.+?)(?:という単語|という言葉|という英語|という表現).*(?:追加|登録|覚え|入れて?)/i.exec(text) ||
+                    /(.+?)を(?:英単語として|単語として)(?:追加|登録|覚えて?)/i.exec(text);
+
+  // 英語フレーズのみの場合も検出（「sales representative 登録して」「〇〇 覚えて」）
+  const _vocabEnglishOnly = !_vocabAdd &&
+    /(?:追加|登録|覚えて?|入れて?|単語帳)/.test(text) &&
+    /[A-Za-z][A-Za-z\s'\-]{2,}/.test(text);
+
+  if (_vocabAdd || _vocabEnglishOnly) {
+    let wordToAdd = '';
+    if (_vocabAdd) {
+      wordToAdd = (_vocabAdd[1] || '').trim().replace(/[「」""]/g, '');
+    } else {
+      // 英語フレーズを抽出
+      const eng = text.match(/[A-Za-z][A-Za-z\s'\-]{1,50}[A-Za-z]/g) || [];
+      wordToAdd = (eng.sort((a, b) => b.length - a.length)[0] || '').trim();
+    }
+    if (wordToAdd && wordToAdd.length > 1) { addVocabWord(wordToAdd); return; }
   }
   if (/単語クイズ|クイズ.*出して|単語.*テスト/.test(lowerText)) {
     showVocabQuizFromChat(); return;
