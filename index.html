@@ -1429,6 +1429,32 @@ function getAppStateContext() {
     }
   } catch(e) {}
 
+  // 昇進準備・TOEIC進捗（KITTがプロアクティブに声をかけるための情報）
+  try {
+    const _tp = JSON.parse(localStorage.getItem('kitt_toeic_progress') || '{}');
+    const _now = new Date();
+    const _exam1 = new Date('2026-06-28');
+    const _exam2 = new Date('2026-07-12');
+    const _weeksTo1 = Math.ceil((_exam1 - _now) / (1000*60*60*24*7));
+    const _weeksTo2 = Math.ceil((_exam2 - _now) / (1000*60*60*24*7));
+    const _curWeek = Math.max(1, 7 - _weeksTo1);
+    ctx += '\n【昇進準備・TOEIC進捗（アドバイザー用）】\n';
+    ctx += `TOEIC第1回: 2026-06-28（残り約${_weeksTo1}週間）/ 第2回保険: 2026-07-12（残り約${_weeksTo2}週間）\n`;
+    ctx += `カリキュラム現在地: Week ${_curWeek}/6\n`;
+    if (_tp.lastStudyDate) {
+      const _lastDate = new Date(_tp.lastStudyDate);
+      const _daysSince = Math.floor((_now - _lastDate) / (1000*60*60*24));
+      ctx += `TOEIC最終学習: ${_tp.lastStudyDate}（${_daysSince}日前）/ 今週の学習回数: ${_tp.weekCount || 0}回\n`;
+      if (_daysSince >= 3) {
+        ctx += `⚠️ 学習が${_daysSince}日空いています。今日の会話でさりげなく確認してください（責めずに優しく）。\n`;
+      }
+    } else {
+      ctx += 'TOEIC学習記録: まだなし。今日の会話でさりげなく学習を促してください。\n';
+    }
+    ctx += `適性検査: 2026年7〜8月頃（準備開始: 6月上旬〜）/ 自己紹介・職歴書: 2026年10月頃\n`;
+    ctx += `【KITTへの指示】上記の残り週数・学習状況を把握し、会話の中で自然に昇進準備に触れること。3日以上空いていたら「今日少しだけでもどうですか？」と一言添える。責めない・短く・具体的に。\n`;
+  } catch(e) {}
+
   // 重要な制約
   ctx += '\n【データ参照ルール（アーキテクチャ原則）】\n';
   ctx += '- KITTはマスターインターフェース。サブウインドウはKITTに従属する視覚補助。\n';
@@ -2950,6 +2976,40 @@ function showPromotionStatus() {
   lines.push('\n「インバスケット練習して」「マネジメント理論を教えて」と話しかけてください。');
 
   addMessage('kitt', lines.join('\n'));
+}
+
+// TOEIC学習記録を保存する関数
+function recordToeicStudy(partLabel) {
+  const today = new Date().toISOString().split('T')[0];
+  const tp = JSON.parse(localStorage.getItem('kitt_toeic_progress') || '{}');
+
+  // 今週のカウント（月曜リセット）
+  const now = new Date();
+  const dayOfWeek = now.getDay(); // 0=日
+  const monday = new Date(now);
+  monday.setDate(now.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1));
+  const mondayStr = monday.toISOString().split('T')[0];
+
+  if (tp.weekStart !== mondayStr) {
+    tp.weekStart = mondayStr;
+    tp.weekCount = 0;
+  }
+
+  tp.lastStudyDate = today;
+  tp.weekCount = (tp.weekCount || 0) + 1;
+
+  // 学習履歴（最大30件）
+  if (!tp.history) tp.history = [];
+  tp.history.unshift({ date: today, part: partLabel || '学習' });
+  if (tp.history.length > 30) tp.history = tp.history.slice(0, 30);
+
+  localStorage.setItem('kitt_toeic_progress', JSON.stringify(tp));
+
+  const exam = new Date('2026-06-28');
+  const weeksLeft = Math.ceil((exam - now) / (1000 * 60 * 60 * 24 * 7));
+  const weekInCurriculum = Math.max(1, 7 - weeksLeft);
+
+  addMessage('kitt', `✅ ${partLabel ? partLabel + 'の' : ''}学習を記録しました！\n今週: ${tp.weekCount}回目 / Week ${weekInCurriculum}/6\n6/28まで残り約${weeksLeft}週間。この調子で続けていきましょう！`);
 }
 
 // --- Phase 2 Day 6: 自動更新機能 ---
@@ -7097,6 +7157,26 @@ function analyzeAndRecord(text) {
     addMessage('kitt', '📚 マネジメント理論を解説します！昇進試験でよく問われる主要理論です。\n\n**① SL理論（状況対応型リーダーシップ）**\n部下の習熟度に応じてリーダーシップスタイルを変える。4スタイル：指示型・コーチング型・支援型・委任型\n\n**② PM理論**\nP機能（目標達成・課題解決）とM機能（集団維持・関係性）の2軸で評価。PM型が最も高い成果。\n\n**③ 変革型リーダーシップ**\nビジョンを示し、内発的動機を引き出してチームを変革に導くスタイル。\n\nどれかを深掘りしたい場合は「SL理論を詳しく」等と話しかけてください。');
     return;
   }
+  // === TOEIC学習記録の自動検出 ===
+  // 「Part3やりました」「TOEIC勉強した」「英語練習した」など
+  {
+    const _toeicDone = /(?:part\s*[1-7]|パート[1-7１-７]|toeic|リスニング|リーディング|公式問題集|金フレ|英語).*(?:やりました|やった|しました|した|終わった|完了|練習した)/i.test(text) ||
+                       /(?:今日|今週).*(?:英語|toeic).*(?:やった|した|勉強)/i.test(text);
+    if (_toeicDone) {
+      // Partラベルを抽出
+      const _partMatch = /part\s*([1-7])|パート([1-7１-７])/i.exec(text);
+      const _partLabel = _partMatch
+        ? `Part${_partMatch[1] || _partMatch[2]}`
+        : /金フレ/.test(text) ? '金フレ（語彙）'
+        : /公式問題集/.test(text) ? '公式問題集'
+        : /リスニング/.test(text) ? 'リスニング'
+        : /リーディング/.test(text) ? 'リーディング'
+        : 'TOEIC';
+      recordToeicStudy(_partLabel);
+      return;
+    }
+  }
+
   if (/toeic.*(?:対策|カリキュラム|練習|模擬|勉強|計画)|リスニング.*(?:練習|対策|鍛え)|英語.*模擬試験/.test(lowerText)) {
     const now = new Date();
     const exam = new Date('2026-06-28');
